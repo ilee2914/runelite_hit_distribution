@@ -5,6 +5,11 @@ import com.github.ilee2.hitdistribution.CombatContext;
 import com.github.ilee2.hitdistribution.ContextStats;
 import com.github.ilee2.hitdistribution.HitDistributionConfig;
 import com.github.ilee2.hitdistribution.HitDistributionStore;
+import com.github.ilee2.hitdistribution.LevelMatch;
+import com.github.ilee2.hitdistribution.sync.CommunityAggregate;
+import com.github.ilee2.hitdistribution.sync.CommunityClient;
+import com.github.ilee2.hitdistribution.sync.CommunityQuery;
+import com.github.ilee2.hitdistribution.sync.CommunitySync;
 import com.github.ilee2.hitdistribution.FilterOptions;
 import com.github.ilee2.hitdistribution.HistoryFilter;
 import com.github.ilee2.hitdistribution.HistoryScope;
@@ -77,10 +82,11 @@ public class HitDistributionPanel extends PluginPanel
 	private final ConfigManager configManager;
 	private final ItemManager itemManager;
 	private final SpriteManager spriteManager;
+	private final CommunityClient community;
+	private final CommunitySync sync;
 	private final Consumer<HistoryScope> clearAction;
 
 	private final JComboBox<HistoryScope> scopeBox = new JComboBox<>(HistoryScope.values());
-	private final JComboBox<Protection> protectionBox = new JComboBox<>(Protection.values());
 
 	private final FilterSelect npcSelect;
 	private final FilterSelect attackSelect;
@@ -95,8 +101,11 @@ public class HitDistributionPanel extends PluginPanel
 	private final JLabel scaleCaption = new JLabel();
 	private final JCheckBox killingBlowBox = new JCheckBox("Count killing blows");
 	private final JLabel killingBlowNote = new JLabel();
+	private final JCheckBox protectionBox = new JCheckBox("Count attacks into protection");
+	private final JLabel protectionNote = new JLabel();
 	private final JPanel statsPanel = new JPanel(new GridLayout(0, 2, 4, 2));
 	private final HistogramPanel histogram = new HistogramPanel();
+	private final JLabel legendLabel = new JLabel();
 	private final JPanel contextsPanel = new JPanel();
 	private final JLabel statusLabel = new JLabel();
 
@@ -104,7 +113,7 @@ public class HitDistributionPanel extends PluginPanel
 
 	public HitDistributionPanel(HitDistributionStore store, HitDistributionConfig config,
 		ConfigManager configManager, ItemManager itemManager, SpriteManager spriteManager,
-		Consumer<HistoryScope> clearAction)
+		CommunityClient community, CommunitySync sync, Consumer<HistoryScope> clearAction)
 	{
 		// Wrapped: PluginPanel supplies the scroll pane, which a long breakdown list needs.
 		super(true);
@@ -113,6 +122,8 @@ public class HitDistributionPanel extends PluginPanel
 		this.configManager = configManager;
 		this.itemManager = itemManager;
 		this.spriteManager = spriteManager;
+		this.community = community;
+		this.sync = sync;
 		this.clearAction = clearAction;
 
 		setLayout(new BorderLayout());
@@ -137,8 +148,8 @@ public class HitDistributionPanel extends PluginPanel
 		content.add(filterRow("Monster", npcSelect));
 		content.add(Box.createVerticalStrut(3));
 		content.add(filterRow("Style", attackSelect));
-		content.add(Box.createVerticalStrut(3));
-		content.add(filterRow("Target", protectionBox));
+		content.add(Box.createVerticalStrut(5));
+		content.add(protectionRow());
 		content.add(Box.createVerticalStrut(4));
 		content.add(gearToggleRow());
 		content.add(gearFilterWrapper);
@@ -162,6 +173,11 @@ public class HitDistributionPanel extends PluginPanel
 
 		histogram.setAlignmentX(Component.LEFT_ALIGNMENT);
 		content.add(histogram);
+
+		legendLabel.setFont(FontManager.getRunescapeSmallFont());
+		legendLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+		content.add(legendLabel);
+
 		content.add(Box.createVerticalStrut(4));
 		content.add(killingBlowRow());
 		content.add(Box.createVerticalStrut(8));
@@ -186,13 +202,9 @@ public class HitDistributionPanel extends PluginPanel
 				refresh();
 			}
 		};
-		protectionBox.addActionListener(onFilter);
 		scopeBox.addActionListener(onFilter);
 
 		populating = true;
-		// Attacks into a protection prayer are a different distribution, and almost never the one
-		// being asked about, so they start hidden.
-		protectionBox.setSelectedItem(Protection.UNPROTECTED);
 		scopeBox.setSelectedItem(config.defaultScope());
 		populating = false;
 
@@ -230,7 +242,6 @@ public class HitDistributionPanel extends PluginPanel
 				npcSelect.clear();
 				attackSelect.clear();
 				gearFilter.clear();
-				protectionBox.setSelectedItem(Protection.UNPROTECTED);
 				populating = false;
 				refresh();
 			}
@@ -339,6 +350,44 @@ public class HitDistributionPanel extends PluginPanel
 		return row;
 	}
 
+	/**
+	 * The protection switch sits with the filters, because it decides which attacks are in the
+	 * sample at all. A target praying against the style being used takes far less damage from it,
+	 * so folding both cases into one average understates what the gear actually does; the switch
+	 * writes the same setting the config panel shows.
+	 */
+	private JPanel protectionRow()
+	{
+		final JPanel row = new JPanel(new BorderLayout(6, 0));
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setAlignmentX(Component.LEFT_ALIGNMENT);
+		row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 20));
+
+		protectionBox.setFont(FontManager.getRunescapeSmallFont());
+		protectionBox.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		protectionBox.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		protectionBox.setFocusPainted(false);
+		protectionBox.setToolTipText("<html>Count the attacks you made while the target was praying<br>"
+			+ "against the style you were using. It takes far less damage<br>"
+			+ "from those, so folding them in drags every average down.<br>"
+			+ "Off: only attacks it was not protecting from. On: all of them.</html>");
+		protectionBox.addActionListener(e ->
+		{
+			if (!populating)
+			{
+				configManager.setConfiguration(HitDistributionConfig.GROUP, "countProtectedAttacks",
+					protectionBox.isSelected());
+				refresh();
+			}
+		});
+		row.add(protectionBox, BorderLayout.WEST);
+
+		protectionNote.setFont(FontManager.getRunescapeSmallFont());
+		protectionNote.setHorizontalAlignment(SwingConstants.RIGHT);
+		row.add(protectionNote, BorderLayout.CENTER);
+		return row;
+	}
+
 	/** The gear grid is tall, so it stays folded away until it is asked for. */
 	private JPanel gearToggleRow()
 	{
@@ -419,12 +468,22 @@ public class HitDistributionPanel extends PluginPanel
 
 		final Aggregate aggregate = store.aggregate(filter, scope, config.includeKillingBlows());
 
-		fillStats(aggregate);
+		// The community answer is whatever has already arrived. Asking never blocks and never
+		// waits; when one lands later the plugin's refresh timer picks it up.
+		final CommunityQuery query = communityQuery(aggregate, filter);
+		final CommunityAggregate others = query == null ? null : community.get(query);
+		final boolean compare = others != null && others.hasData();
+
+		fillStats(aggregate, compare ? others : null);
 		fillCaptions(aggregate);
 		fillKillingBlows(aggregate);
+		fillProtection(aggregate, filter, scope);
 		histogram.setData(aggregate.getCounts(),
 			aggregate.isKillingBlowsIncluded() ? aggregate.getKillCounts() : new int[0],
-			aggregate.getSplashes(), aggregate.getHighestHit());
+			aggregate.getSplashes(), aggregate.getHighestHit(),
+			compare ? others.getCounts() : null,
+			compare ? others.getSplashes() : 0);
+		fillLegend(query, others);
 		fillHistory(filter, scope);
 
 		final String player = store.getPlayerName();
@@ -443,7 +502,19 @@ public class HitDistributionPanel extends PluginPanel
 		{
 			status.append(" \u00b7 ").append(store.getUnattributedHits(scope)).append(" unattributed");
 		}
-		statusLabel.setText(status.toString());
+
+		final String shared = sync.getStatus();
+		if (shared != null)
+		{
+			status.append("<br>").append(shared);
+			final String id = store.getUploaderId();
+			if (id != null && id.length() >= 8)
+			{
+				// The only handle a player has on their own data if they ever want it removed.
+				status.append(" \u00b7 id ").append(id, 0, 8);
+			}
+		}
+		statusLabel.setText("<html>" + status + "</html>");
 
 		revalidate();
 		repaint();
@@ -472,58 +543,219 @@ public class HitDistributionPanel extends PluginPanel
 		final FilterOptions.Option npc = npcSelect.getSelected();
 		final FilterOptions.Option attack = attackSelect.getSelected();
 
-		final Protection protection = (Protection) protectionBox.getSelectedItem();
-
 		// The weapon is not read from its own box: it is slot 3 of the gear filter, which the box
-		// and the equipment grid both write to.
+		// and the equipment grid both write to. Attacks into a protection prayer are a different
+		// distribution, so unless they are asked for the filter keeps only the unprotected ones.
 		return new HistoryFilter(
 			npc == null ? null : npc.getName(),
 			npc == null ? null : npc.getId(),
 			gearFilter,
 			attack == null ? null : attack.getName(),
-			protection == null ? null : protection.value);
+			config.countProtectedAttacks() ? null : Boolean.FALSE);
 	}
 
-	private void fillStats(Aggregate a)
+	/**
+	 * The summary grid. With a community answer it grows a third column: the statistics that
+	 * describe the <em>shape</em> of a distribution and how well it was used are worth comparing,
+	 * and the running totals are not, because they only say how long someone has been playing.
+	 */
+	private void fillStats(Aggregate a, @Nullable CommunityAggregate others)
 	{
+		final boolean compare = others != null;
 		statsPanel.removeAll();
+		statsPanel.setLayout(new GridLayout(0, compare ? 3 : 2, 4, 2));
 
 		if (a.isEmpty())
 		{
-			addStat("Attacks", "0");
-			addStat("Hits", "none yet");
+			addStat("Attacks", "0", null, compare);
+			addStat("Hits", "none yet", null, compare);
 			return;
 		}
 
-		addStat("Attacks", integer(a.getAttacks()));
-		addStat("Hitsplats", integer(a.getHitsplats()));
-		addStat("Total damage", integer(a.getTotalDamage()));
-		addStat("Avg / attack", decimal(a.getAveragePerAttack()));
-		addStat("Avg / hitsplat", decimal(a.getAveragePerHitsplat()));
-		addStat("Avg / landed hit", decimal(a.getAveragePerLandedHit()));
-		addStat("Accuracy", percent(a.getAccuracy()));
+		if (compare)
+		{
+			addHeading("", "You", "Everyone");
+		}
+
+		addStat("Attacks", integer(a.getAttacks()), null, compare);
+		addStat("Hitsplats", integer(a.getHitsplats()), null, compare);
+		addStat("Total damage", integer(a.getTotalDamage()), null, compare);
+		addStat("Avg / attack", decimal(a.getAveragePerAttack()), null, compare);
+		addStat("Avg / hitsplat", decimal(a.getAveragePerHitsplat()),
+			compare ? decimal(others.getAveragePerHitsplat()) : null, compare);
+		addStat("Avg / landed hit", decimal(a.getAveragePerLandedHit()),
+			compare ? decimal(others.getAveragePerLandedHit()) : null, compare);
+		addStat("Accuracy", percent(a.getAccuracy()),
+			compare ? percent(others.getAccuracy()) : null, compare);
 		if (a.getMagicAttacks() > 0 || a.getSplashes() > 0)
 		{
-			addStat("Splash rate", percent(a.getSplashRate()) + "  (" + integer(a.getSplashes()) + ")");
+			addStat("Splash rate", percent(a.getSplashRate()) + "  (" + integer(a.getSplashes()) + ")",
+				compare ? percent(others.getSplashRate()) : null, compare);
 		}
 		if (a.getProtectedAttacks() > 0)
 		{
 			addStat("Into protection",
-				percent(a.getProtectedShare()) + "  (" + integer(a.getProtectedAttacks()) + ")");
+				percent(a.getProtectedShare()) + "  (" + integer(a.getProtectedAttacks()) + ")",
+				null, compare);
 		}
-		addStat("Highest hit", integer(a.getHighestHit()));
-		addStat("Max-hit rate", percent(a.getMaxHitRate()) + "  (" + integer(a.getMaxHits()) + ")");
-		addStat("DPS", decimal(a.getDps()));
-		addStat("Wasted ticks", integer(a.getWastedTicks()) + "  (" + percent(a.getWastedShare()) + ")");
-		addStat("Wasted / attack", decimal(a.getWastedPerAttack()));
+		addStat("Highest hit", integer(a.getHighestHit()),
+			compare ? integer(others.getHighestHit()) : null, compare);
+		addStat("Max-hit rate", percent(a.getMaxHitRate()) + "  (" + integer(a.getMaxHits()) + ")",
+			compare ? percent(others.getMaxHitRate()) : null, compare);
+		addStat("DPS", decimal(a.getDps()), compare ? decimal(others.getDps()) : null, compare);
+		addStat("Wasted ticks", integer(a.getWastedTicks()) + "  (" + percent(a.getWastedShare()) + ")",
+			null, compare);
+		addStat("Wasted / attack", decimal(a.getWastedPerAttack()),
+			compare ? decimal(others.getWastedPerAttack()) : null, compare);
 		if (a.getFights() > 0)
 		{
-			addStat("Kills", integer(a.getKills()) + " / " + integer(a.getFights()) + " fights");
+			addStat("Kills", integer(a.getKills()) + " / " + integer(a.getFights()) + " fights",
+				null, compare);
 			if (a.getKills() > 0)
 			{
-				addStat("Avg kill time", decimal(a.getAverageKillSeconds()) + " s");
+				addStat("Avg kill time", decimal(a.getAverageKillSeconds()) + " s", null, compare);
 			}
 		}
+	}
+
+	/**
+	 * @return the community lookup this filter deserves, or null when there is nothing sensible to
+	 * ask. A monster and a weapon are the minimum: everyone's hits at a boss with every weapon
+	 * mixed together is not a distribution anyone can read.
+	 */
+	@Nullable
+	private CommunityQuery communityQuery(Aggregate a, HistoryFilter filter)
+	{
+		if (!config.showCommunity() || a.isEmpty())
+		{
+			return null;
+		}
+
+		final List<Integer> npcIds = new ArrayList<>();
+		if (filter.getNpcId() != null)
+		{
+			npcIds.add(filter.getNpcId());
+		}
+		else
+		{
+			npcIds.addAll(store.npcIdsNamed(filter.getNpcName()));
+		}
+		if (npcIds.isEmpty())
+		{
+			return null;
+		}
+
+		// Anchor the level match on the setup that most of these hits were made with.
+		CombatContext anchor = null;
+		int best = -1;
+		boolean mixedStyles = false;
+		for (ContextStats stats : a.getContexts())
+		{
+			final CombatContext context = stats.getContext();
+			if (anchor != null && context.getCombatStyle() != anchor.getCombatStyle())
+			{
+				mixedStyles = true;
+			}
+			if (stats.getAttacks() > best)
+			{
+				best = stats.getAttacks();
+				anchor = context;
+			}
+		}
+		if (anchor == null)
+		{
+			return null;
+		}
+
+		final LevelMatch match = mixedStyles ? LevelMatch.ANY : config.levelMatch();
+		final CommunityQuery query = new CommunityQuery(filter, npcIds, match,
+			mainSkillLevel(anchor), anchor.getReal(), store.getUploaderId());
+		return query.isAskable() ? query : null;
+	}
+
+	/** The real level of the skill that drives this style's damage; the level bracket is on it. */
+	private static int mainSkillLevel(CombatContext context)
+	{
+		final int[] real = context.getReal();
+		if (real == null || real.length < CombatContext.SKILL_NAMES.length)
+		{
+			return -1;
+		}
+		switch (context.getCombatStyle())
+		{
+			case RANGED:
+				return real[2];
+			case MAGIC:
+				return real[3];
+			default:
+				return real[1];
+		}
+	}
+
+	/** Says what the second series in the chart is, or why there is not one. */
+	private void fillLegend(@Nullable CommunityQuery query, @Nullable CommunityAggregate others)
+	{
+		if (query == null || !config.showCommunity())
+		{
+			legendLabel.setText("");
+			return;
+		}
+
+		if (others == null)
+		{
+			legendLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			legendLabel.setText(community.isLoading(query) ? "Everyone: loading" : "");
+			return;
+		}
+		if (others.isTooBroad())
+		{
+			legendLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			legendLabel.setText("Everyone: too many setups match, add a filter");
+			return;
+		}
+		if (!others.hasData())
+		{
+			legendLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			legendLabel.setText("Everyone: nobody has shared this setup yet");
+			return;
+		}
+
+		final StringBuilder sb = new StringBuilder("<html>");
+		sb.append("<font color='#").append(hex(ColorScheme.BRAND_ORANGE)).append("'>&#9632;</font> You");
+		sb.append("&nbsp;&nbsp;");
+		sb.append("<font color='#").append(hex(HistogramPanel.COMMUNITY_COLOR)).append("'>&#9632;</font> ");
+		sb.append("Everyone");
+		if (others.getOthers() > 0)
+		{
+			sb.append(" (").append(integer(others.getOthers()))
+				.append(others.getOthers() == 1 ? " other" : " others").append(")");
+		}
+		else
+		{
+			sb.append(" (just you so far)");
+		}
+
+		final CommunityAggregate.Epoch epoch = others.getEpoch();
+		if (epoch != null && epoch.getStartLabel() != null && epoch.isReady())
+		{
+			sb.append("<br>since ").append(epoch.getStartLabel());
+			if (epoch.getNote() != null && !epoch.getNote().isEmpty())
+			{
+				legendLabel.setToolTipText(epoch.getNote());
+			}
+		}
+		else
+		{
+			legendLabel.setToolTipText(null);
+		}
+
+		legendLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		legendLabel.setText(sb.append("</html>").toString());
+	}
+
+	private static String hex(Color color)
+	{
+		return String.format("%02x%02x%02x", color.getRed(), color.getGreen(), color.getBlue());
 	}
 
 	/** Spells out what the chart's cut-off bars and its height actually mean. */
@@ -586,7 +818,46 @@ public class HitDistributionPanel extends PluginPanel
 		}
 	}
 
-	private void addStat(String name, String value)
+	/**
+	 * Keeps the protection switch in step with the setting, and says how many attacks it is
+	 * holding back. The count comes from the same filter with the protection dimension dropped,
+	 * so it answers "how much is missing" rather than "how much is shown".
+	 */
+	private void fillProtection(Aggregate a, HistoryFilter filter, HistoryScope scope)
+	{
+		populating = true;
+		protectionBox.setSelected(config.countProtectedAttacks());
+		populating = false;
+
+		// When they are being counted the aggregate on screen already holds them; only the
+		// filtered-out case needs a second pass over the store.
+		final int protectedAttacks = filter.getStyleProtected() == null
+			? a.getProtectedAttacks()
+			: store.aggregate(filter.withoutProtection(), scope, config.includeKillingBlows())
+				.getProtectedAttacks();
+
+		if (protectedAttacks == 0)
+		{
+			protectionNote.setText("");
+		}
+		else if (config.countProtectedAttacks())
+		{
+			protectionNote.setForeground(PROTECTED_COLOR);
+			protectionNote.setText(integer(protectedAttacks) + " in");
+		}
+		else
+		{
+			protectionNote.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			protectionNote.setText(integer(protectedAttacks) + " out");
+		}
+	}
+
+	/**
+	 * @param theirs the community's value, or null when the statistic is not worth comparing (a
+	 * running total) or there is no community answer. A null still fills the cell in three-column
+	 * mode, or the grid would shift everything left.
+	 */
+	private void addStat(String name, String value, @Nullable String theirs, boolean compare)
 	{
 		final JLabel n = new JLabel(name);
 		n.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
@@ -597,6 +868,27 @@ public class HitDistributionPanel extends PluginPanel
 		v.setForeground(Color.WHITE);
 		v.setFont(FontManager.getRunescapeSmallFont());
 		statsPanel.add(v);
+
+		if (compare)
+		{
+			final JLabel o = new JLabel(theirs == null ? "" : theirs, SwingConstants.RIGHT);
+			o.setForeground(theirs == null ? ColorScheme.LIGHT_GRAY_COLOR : HistogramPanel.COMMUNITY_COLOR);
+			o.setFont(FontManager.getRunescapeSmallFont());
+			statsPanel.add(o);
+		}
+	}
+
+	/** The column titles above a three-column comparison. */
+	private void addHeading(String name, String mine, String theirs)
+	{
+		for (String text : new String[]{name, mine, theirs})
+		{
+			final JLabel label = new JLabel(text,
+				text.equals(name) ? SwingConstants.LEFT : SwingConstants.RIGHT);
+			label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			label.setFont(FontManager.getRunescapeSmallFont());
+			statsPanel.add(label);
+		}
 	}
 
 	/** What each of the matching hits actually did, newest first. */
@@ -899,31 +1191,4 @@ public class HitDistributionPanel extends PluginPanel
 		return String.format(Locale.ROOT, "%.1f%%", share * 100);
 	}
 
-	/**
-	 * The Target filter. An NPC praying against the style being used takes far less damage from
-	 * it, so folding both cases into one average understates what the gear actually does.
-	 */
-	private enum Protection
-	{
-		ANY("All targets", null),
-		UNPROTECTED("Not protecting", Boolean.FALSE),
-		PROTECTED("Praying against me", Boolean.TRUE);
-
-		private final String label;
-
-		@Nullable
-		private final Boolean value;
-
-		Protection(String label, @Nullable Boolean value)
-		{
-			this.label = label;
-			this.value = value;
-		}
-
-		@Override
-		public String toString()
-		{
-			return label;
-		}
-	}
 }

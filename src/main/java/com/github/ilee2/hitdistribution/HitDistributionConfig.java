@@ -26,6 +26,14 @@ public interface HitDistributionConfig extends Config
 	)
 	String trackingSection = "tracking";
 
+	@ConfigSection(
+		name = "Community",
+		description = "Compare your hits with other players of this plugin. Off by default.",
+		position = 2,
+		closedByDefault = true
+	)
+	String communitySection = "community";
+
 	// ---------------------------------------------------------------- display
 
 	@ConfigItem(
@@ -53,10 +61,22 @@ public interface HitDistributionConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "countProtectedAttacks",
+		name = "Count attacks into protection",
+		description = "Include attacks made while the target was praying against the style you were using. It takes far less damage from those, so leaving them out shows what your setup does to a target that is not protecting. Can also be toggled in the panel.",
+		position = 2,
+		section = displaySection
+	)
+	default boolean countProtectedAttacks()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "splitNpcById",
 		name = "Split monsters by id",
 		description = "Show one entry per NPC id instead of one per name, so phases or forms that share a name can be told apart.",
-		position = 2,
+		position = 3,
 		section = displaySection
 	)
 	default boolean splitNpcById()
@@ -68,7 +88,7 @@ public interface HitDistributionConfig extends Config
 		keyName = "showContexts",
 		name = "Show damage history",
 		description = "List the individual hits matching the filter under the chart.",
-		position = 3,
+		position = 4,
 		section = displaySection
 	)
 	default boolean showContexts()
@@ -80,7 +100,7 @@ public interface HitDistributionConfig extends Config
 		keyName = "maxContexts",
 		name = "History rows",
 		description = "Most hits to list under the chart.",
-		position = 4,
+		position = 5,
 		section = displaySection
 	)
 	@Range(min = 5, max = 200)
@@ -93,7 +113,7 @@ public interface HitDistributionConfig extends Config
 		keyName = "hitLogSize",
 		name = "Hits kept",
 		description = "How many individual hits to keep in the history file. The statistics and the chart are unaffected; they are built from totals that are never dropped.",
-		position = 5,
+		position = 6,
 		section = displaySection
 	)
 	@Range(min = 50, max = 5000)
@@ -156,5 +176,98 @@ public interface HitDistributionConfig extends Config
 	default boolean debugLog()
 	{
 		return false;
+	}
+
+	// -------------------------------------------------------------- community
+
+	@ConfigItem(
+		keyName = "uploadEnabled",
+		name = "Share my hits",
+		description = "Share your hit statistics with other players of this plugin, and see how"
+			+ " your damage distribution, accuracy, DPS and wasted ticks compare with everyone"
+			+ " else's using the same setup."
+			+ " What is sent: for each combination of worn gear, Attack/Strength/Ranged/Magic"
+			+ " levels, damage prayers, attack style, spell, special attack, target monster and"
+			+ " the monster's overhead prayer, the count of hits at each damage value and the"
+			+ " totals behind the panel's statistics, plus the item and monster names for the ids"
+			+ " involved. A random id identifies your history file so your own numbers can be"
+			+ " updated; it is not derived from your account."
+			+ " Your character name, account, world, location, chat and other players are never"
+			+ " sent. Nothing is sent while this is off.",
+		position = 0,
+		section = communitySection
+	)
+	default boolean uploadEnabled()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "uploadMinutes",
+		name = "Share every",
+		description = "How often your statistics are sent while you are logged in. They are also"
+			+ " sent when you log out, when you close the client, and once after you log in to"
+			+ " catch up anything a crash interrupted. Nothing is ever sent per attack.",
+		position = 1,
+		section = communitySection
+	)
+	@Range(min = 15, max = 120)
+	@Units(Units.MINUTES)
+	default int uploadMinutes()
+	{
+		return 30;
+	}
+
+	@ConfigItem(
+		keyName = "showCommunity",
+		name = "Show the community chart",
+		description = "Draw everyone else's distribution beside your own, and compare the summary"
+			+ " statistics, whenever the filter names a monster and a weapon.",
+		position = 2,
+		section = communitySection
+	)
+	default boolean showCommunity()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "levelMatch",
+		name = "Match levels",
+		description = "Which other players to compare against. The bracket is the five-level band"
+			+ " of the skill that drives your style's damage, so 95 to 99 is one bracket. Exact"
+			+ " matching is the most like for like and finds the fewest players.",
+		position = 3,
+		section = communitySection
+	)
+	default LevelMatch levelMatch()
+	{
+		return LevelMatch.BRACKET;
+	}
+
+	@ConfigItem(
+		keyName = "installId",
+		name = "",
+		description = "",
+		hidden = true,
+		section = communitySection,
+		position = 98
+	)
+	default String installId()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+		keyName = "serverUrl",
+		name = "",
+		description = "",
+		hidden = true,
+		section = communitySection,
+		position = 99
+	)
+	default String serverUrl()
+	{
+		return "";
 	}
 }

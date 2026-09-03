@@ -69,6 +69,14 @@ public class HistoryFilter
 		return new HistoryFilter(npcName, npcId, gear, null, styleProtected);
 	}
 
+	/** @return this filter with the target-protection dimension dropped. */
+	public HistoryFilter withoutProtection()
+	{
+		return styleProtected == null
+			? this
+			: new HistoryFilter(npcName, npcId, gear, attackLabel, null);
+	}
+
 	/** @return this filter with one equipment slot dropped. */
 	HistoryFilter withoutSlot(int slot)
 	{

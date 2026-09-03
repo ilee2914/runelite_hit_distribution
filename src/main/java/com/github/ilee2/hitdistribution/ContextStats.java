@@ -99,6 +99,73 @@ public class ContextStats
 		}
 	}
 
+	/** Replaces the context, and with it the key this record belongs under. See format 8. */
+	void rekey(CombatContext replacement)
+	{
+		context = replacement;
+	}
+
+	/**
+	 * Folds {@code other} into this record. Every counter here describes the same setup under the
+	 * same key, so all of them are additive: histograms sum index by index, totals sum, and the
+	 * window widens to cover both. Used by the format 8 migration, where several records written
+	 * under stale keys turn out to describe one setup.
+	 */
+	void mergeFrom(ContextStats other)
+	{
+		counts = sum(counts, other.counts);
+		killCounts = sum(killCounts, other.killCounts);
+		attacks += other.attacks;
+		hitsplats += other.hitsplats;
+		splashes += other.splashes;
+		maxHits += other.maxHits;
+		killingBlows += other.killingBlows;
+		killingBlowMaxHits += other.killingBlowMaxHits;
+		wastedTicks += other.wastedTicks;
+		activeTicks += other.activeTicks;
+		firstSeen = earliest(firstSeen, other.firstSeen);
+		lastSeen = Math.max(lastSeen, other.lastSeen);
+	}
+
+	/**
+	 * @return {@code a} and {@code b} added index by index, at the length of the longer. Null is
+	 * an empty histogram, and stays null when both sides are empty so a record that never had a
+	 * killing blow does not gain an array by being merged.
+	 */
+	@Nullable
+	private static int[] sum(@Nullable int[] a, @Nullable int[] b)
+	{
+		if (a == null || a.length == 0)
+		{
+			return b == null ? a : Arrays.copyOf(b, b.length);
+		}
+		if (b == null || b.length == 0)
+		{
+			return a;
+		}
+
+		final int[] out = Arrays.copyOf(a, Math.max(a.length, b.length));
+		for (int i = 0; i < b.length; i++)
+		{
+			out[i] += b[i];
+		}
+		return out;
+	}
+
+	/** Zero means "never recorded", not "1970", so it must not win a minimum. */
+	private static long earliest(long a, long b)
+	{
+		if (a <= 0)
+		{
+			return b;
+		}
+		if (b <= 0)
+		{
+			return a;
+		}
+		return Math.min(a, b);
+	}
+
 	/** Never null, whatever the file said. */
 	public int[] getKillCounts()
 	{
@@ -161,6 +228,7 @@ public class ContextStats
 		{
 			killingBlowMaxHits++;
 		}
+		touch();
 		return true;
 	}
 
@@ -176,6 +244,7 @@ public class ContextStats
 		if (splashes > 0)
 		{
 			splashes--;
+			touch();
 		}
 	}
 

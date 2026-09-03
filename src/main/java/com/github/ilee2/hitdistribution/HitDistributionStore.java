@@ -1,5 +1,6 @@
 package com.github.ilee2.hitdistribution;
 
+import com.github.ilee2.hitdistribution.sync.UploadBatch;
 import com.google.gson.Gson;
 import java.io.File;
 import java.io.IOException;
@@ -13,6 +14,8 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -837,6 +840,162 @@ public class HitDistributionStore
 		return context != null && filter.getAttackLabel().equals(context.getAttackLabel());
 	}
 
+	// ------------------------------------------------------------ community upload
+
+	/**
+	 * @return the recorded setups the community server has not acknowledged yet, oldest change
+	 * first and at most {@code cap} of them, or null when nothing is loaded or nothing has
+	 * changed. Every record is a copy, so the caller can serialise it off the client thread while
+	 * the fight carries on.
+	 *
+	 * <p>Counters are cumulative, not a delta. Re-sending a batch therefore changes nothing on the
+	 * server, which is what makes a retry after a timeout or a crash safe.
+	 */
+	@Nullable
+	public synchronized UploadBatch pendingUpload(int cap, String install, String client)
+	{
+		if (file == null || playerName == null)
+		{
+			return null;
+		}
+
+		final long through = data.getUploadedThrough();
+		List<ContextStats> pending = new ArrayList<>();
+		for (ContextStats stats : data.getContexts().values())
+		{
+			if (stats.getContext() != null && stats.getLastSeen() > through)
+			{
+				pending.add(stats.copy());
+			}
+		}
+		if (pending.isEmpty())
+		{
+			return null;
+		}
+
+		pending.sort(Comparator.comparingLong(ContextStats::getLastSeen));
+		if (pending.size() > cap)
+		{
+			pending = pending.subList(0, cap);
+		}
+
+		// Only the names the batch actually refers to; the server already knows the rest.
+		final Map<Integer, NpcName> npcs = new HashMap<>();
+		final Map<Integer, String> items = new HashMap<>();
+		for (ContextStats stats : pending)
+		{
+			final CombatContext context = stats.getContext();
+			final NpcName npc = data.getNpcNames().get(context.getNpcId());
+			if (npc != null)
+			{
+				npcs.put(context.getNpcId(), npc);
+			}
+			for (int itemId : context.getGear())
+			{
+				final String name = data.getItemNames().get(itemId);
+				if (name != null)
+				{
+					items.put(itemId, name);
+				}
+			}
+		}
+
+		return new UploadBatch(uploaderId(), install, client, HistoryData.CURRENT_VERSION,
+			pending, npcs, items, playerName);
+	}
+
+	/**
+	 * Moves the watermark up to what {@code batch} carried, so those records are not sent again.
+	 *
+	 * <p>The response usually arrives while the same character is still logged in. It does not on
+	 * a logout upload, which is sent moments before the file is unloaded, so the watermark is
+	 * written straight into that character's file instead. Without this a session shorter than the
+	 * upload timer would never advance its watermark and would re-send its whole history at every
+	 * login. It is never credited to a different character.
+	 */
+	public synchronized void markUploaded(UploadBatch batch)
+	{
+		final String owner = batch.getPlayer();
+		if (owner == null)
+		{
+			return;
+		}
+
+		if (file != null && Objects.equals(playerName, owner))
+		{
+			if (batch.getThrough() > data.getUploadedThrough())
+			{
+				data.setUploadedThrough(batch.getThrough());
+				dirty = true;
+			}
+			return;
+		}
+
+		final File target = new File(directory, sanitise(owner) + ".json");
+		if (!target.isFile())
+		{
+			return;
+		}
+		try
+		{
+			final HistoryData stored = read(target);
+			if (batch.getThrough() > stored.getUploadedThrough())
+			{
+				stored.setUploadedThrough(batch.getThrough());
+				write(target, stored);
+			}
+		}
+		catch (IOException | RuntimeException e)
+		{
+			// Losing a watermark only costs one repeated upload, which the server ignores.
+			log.debug("Unable to record the upload watermark for {}", owner, e);
+		}
+	}
+
+	/**
+	 * @return every NPC id this file has seen under {@code name}. The panel filters by name and
+	 * the server keys on id, so a monster whose phases or worlds use several ids has to be asked
+	 * about by all of them. Ids other players know under that name but this file has never met
+	 * are simply not asked for.
+	 */
+	public synchronized List<Integer> npcIdsNamed(@Nullable String name)
+	{
+		final List<Integer> ids = new ArrayList<>();
+		if (name == null || name.isEmpty())
+		{
+			return ids;
+		}
+		for (Map.Entry<Integer, NpcName> e : data.getNpcNames().entrySet())
+		{
+			if (e.getValue() != null && name.equals(e.getValue().getName()))
+			{
+				ids.add(e.getKey());
+			}
+		}
+		return ids;
+	}
+
+	/** @return the id this file is known to the server by, or null if it has never uploaded. */
+	@Nullable
+	public synchronized String getUploaderId()
+	{
+		return data.getUploaderId();
+	}
+
+	/** The same id, created and marked for saving if this file has never had one. */
+	private String uploaderId()
+	{
+		String id = data.getUploaderId();
+		if (id == null || id.isEmpty())
+		{
+			id = UUID.randomUUID().toString();
+			data.setUploaderId(id);
+			dirty = true;
+			log.debug("Created an uploader id for {}", playerName);
+		}
+		return id;
+	}
+
 	// --------------------------------------------------------------------- io
 
 	private HistoryData read(File source)
@@ -859,9 +1018,16 @@ public class HitDistributionStore
 				s -> s == null || s.getContext() == null || s.getContext().getKey() == null || s.getCounts() == null);
 			if (loaded.getVersion() != HistoryData.CURRENT_VERSION)
 			{
-				log.debug("Upgrading history {} from version {} to {}; existing records are kept as they are",
-					source, loaded.getVersion(), HistoryData.CURRENT_VERSION);
+				final int before = loaded.getContexts().size();
+				log.debug("Upgrading history {} from version {} to {}", source, loaded.getVersion(),
+					HistoryData.CURRENT_VERSION);
 				loaded.upgrade();
+				final int after = loaded.getContexts().size();
+				if (after != before)
+				{
+					log.debug("Merged {} records written under stale keys; {} setups remain",
+						before - after, after);
+				}
 			}
 			return loaded;
 		}

@@ -9,6 +9,7 @@ import java.awt.RenderingHints;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
+import javax.annotation.Nullable;
 import javax.swing.JPanel;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.FontManager;
@@ -25,11 +26,20 @@ import net.runelite.client.ui.FontManager;
  * several times over, and scaling to them would squash every real bar to nothing, so those two
  * run off the end of the chart with a torn edge and their true count beside them. They sit above
  * a divider, apart from the damage they are not part of.
+ *
+ * <p>When a community distribution is supplied, each row grows a second bar under the first and
+ * both series switch to <em>share of attempts</em> rather than raw counts. Everyone else together
+ * has thousands of times more hits than one player, so raw counts would draw one visible series
+ * and one flat line; shares are the only way the two shapes can be compared.
  */
 public class HistogramPanel extends JPanel
 {
-	private static final int ROW_HEIGHT = 13;
-	private static final int BAR_HEIGHT = 9;
+	private static final int SOLO_ROW_HEIGHT = 13;
+	private static final int SOLO_BAR_HEIGHT = 9;
+	private static final int PAIR_ROW_HEIGHT = 15;
+	private static final int PAIR_BAR_HEIGHT = 5;
+	private static final int PAIR_BAR_GAP = 1;
+
 	private static final int GUTTER = 22;
 	private static final int LEFT_PAD = 2;
 	private static final int RIGHT_PAD = 4;
@@ -50,6 +60,9 @@ public class HistogramPanel extends JPanel
 	/** Killing blows, both in their bar segments here and wherever the panel refers to them. */
 	public static final Color KILL_COLOR = new Color(196, 96, 70);
 
+	/** Everyone else's distribution. Cool against the warm bars so the two never read as one. */
+	public static final Color COMMUNITY_COLOR = new Color(96, 156, 196);
+
 	/** One bar: a hitsplat amount, or the miss or splash tally. */
 	private static class Row
 	{
@@ -63,6 +76,9 @@ public class HistogramPanel extends JPanel
 
 		/** How many of {@link #count} ended a fight; drawn as a segment at the end of the bar. */
 		private final int killCount;
+
+		/** The same amount across everyone else, or -1 when there is no community series. */
+		private int otherCount = -1;
 
 		Row(String label, String tooltip, int count, Color color, boolean offScale, int killCount)
 		{
@@ -78,6 +94,11 @@ public class HistogramPanel extends JPanel
 	private List<Row> rows = new ArrayList<>();
 	private int peak;
 	private int total;
+
+	/** Attempts across everyone else, so their bars can be drawn as shares. 0 when absent. */
+	private int otherTotal;
+
+	private boolean paired;
 
 	/** Index of the first damage row, which is where the divider goes. */
 	private int firstDamageRow;
@@ -122,10 +143,20 @@ public class HistogramPanel extends JPanel
 	 */
 	public void setData(int[] counts, int[] killCounts, int splashes, int highestHit)
 	{
+		setData(counts, killCounts, splashes, highestHit, null, 0);
+	}
+
+	/**
+	 * @param otherCounts everyone else's hitsplats by damage, or null to draw this player alone.
+	 * @param otherSplashes their splashes, which count towards their attempts the same way.
+	 */
+	public void setData(int[] counts, int[] killCounts, int splashes, int highestHit,
+		@Nullable int[] otherCounts, int otherSplashes)
+	{
 		final List<Row> built = new ArrayList<>();
 		int attempts = splashes;
 
-		if (splashes > 0)
+		if (splashes > 0 || (otherCounts != null && otherSplashes > 0))
 		{
 			built.add(new Row("S", "Splash", splashes, SPLASH_COLOR, true, 0));
 		}
@@ -138,14 +169,44 @@ public class HistogramPanel extends JPanel
 
 		firstDamageRow = built.size();
 
+		// Long enough for both series: a damage value only they have reached still gets a row.
+		final int width = Math.max(counts.length, otherCounts == null ? 0 : otherCounts.length);
+
 		int highest = 0;
-		for (int d = 1; d < counts.length; d++)
+		for (int d = 1; d < width; d++)
 		{
-			final int kills = d < killCounts.length ? Math.min(killCounts[d], counts[d]) : 0;
-			built.add(new Row(Integer.toString(d), "Hit " + d, counts[d],
+			final int mine = d < counts.length ? counts[d] : 0;
+			final int kills = d < killCounts.length ? Math.min(killCounts[d], mine) : 0;
+			built.add(new Row(Integer.toString(d), "Hit " + d, mine,
 				d == highestHit ? MAX_COLOR : HIT_COLOR, false, kills));
-			attempts += counts[d];
-			highest = Math.max(highest, counts[d]);
+			attempts += mine;
+			highest = Math.max(highest, mine);
+		}
+
+		paired = otherCounts != null;
+		otherTotal = 0;
+		if (paired)
+		{
+			otherTotal = otherSplashes;
+			for (int d = 0; d < otherCounts.length; d++)
+			{
+				otherTotal += otherCounts[d];
+			}
+			for (int i = 0; i < built.size(); i++)
+			{
+				final Row row = built.get(i);
+				if (i < firstDamageRow)
+				{
+					row.otherCount = "S".equals(row.label)
+						? otherSplashes
+						: (otherCounts.length > 0 ? otherCounts[0] : 0);
+				}
+				else
+				{
+					final int d = i - firstDamageRow + 1;
+					row.otherCount = d < otherCounts.length ? otherCounts[d] : 0;
+				}
+			}
 		}
 
 		rows = built;
@@ -162,13 +223,18 @@ public class HistogramPanel extends JPanel
 		repaint();
 	}
 
+	private int rowHeight()
+	{
+		return paired ? PAIR_ROW_HEIGHT : SOLO_ROW_HEIGHT;
+	}
+
 	private int height()
 	{
 		if (rows == null || rows.isEmpty())
 		{
 			return 28;
 		}
-		return TOP_PAD + rows.size() * ROW_HEIGHT + BOTTOM_PAD
+		return TOP_PAD + rows.size() * rowHeight() + BOTTOM_PAD
 			+ (firstDamageRow > 0 ? DIVIDER_HEIGHT : 0);
 	}
 
@@ -182,13 +248,24 @@ public class HistogramPanel extends JPanel
 		}
 
 		final Row row = rows.get(index);
-		final String base = String.format("%s: %d (%.1f%%)", row.tooltip, row.count,
-			100.0 * row.count / Math.max(1, total));
-		if (row.killCount == 0)
+		final String kills = row.killCount == 0
+			? ""
+			: ", " + row.killCount + (row.killCount == 1 ? " killing blow" : " killing blows");
+
+		if (!paired)
 		{
-			return base;
+			return String.format("%s: %d (%s)", row.tooltip, row.count, percent(row.count, total)) + kills;
 		}
-		return base + ", " + row.killCount + (row.killCount == 1 ? " killing blow" : " killing blows");
+
+		return "<html>" + row.tooltip
+			+ "<br>You: " + row.count + " (" + percent(row.count, total) + ")" + kills
+			+ "<br>Everyone: " + Math.max(0, row.otherCount)
+			+ " (" + percent(Math.max(0, row.otherCount), otherTotal) + ")</html>";
+	}
+
+	private static String percent(int part, int whole)
+	{
+		return whole <= 0 ? "0.0%" : String.format("%.1f%%", 100.0 * part / whole);
 	}
 
 	@Override
@@ -224,7 +301,12 @@ public class HistogramPanel extends JPanel
 		final int barLeft = LEFT_PAD + GUTTER;
 		final int countWidth = fm.stringWidth(Integer.toString(widestCount())) + COUNT_GAP;
 		final int barMax = Math.max(MIN_BAR, getWidth() - barLeft - RIGHT_PAD - countWidth);
-		final int scale = Math.max(1, peak);
+
+		// Alone, bars are counts against the tallest count. Beside the community they are shares
+		// against the tallest share of either series, which is the only comparable scale.
+		final double scale = paired ? peakShare() : Math.max(1, peak);
+		final int rowHeight = rowHeight();
+		final int barHeight = paired ? PAIR_BAR_HEIGHT : SOLO_BAR_HEIGHT;
 
 		for (int i = 0; i < rows.size(); i++)
 		{
@@ -234,52 +316,67 @@ public class HistogramPanel extends JPanel
 			if (i == hoverRow)
 			{
 				g.setColor(HOVER_COLOR);
-				g.fillRect(0, y, getWidth(), ROW_HEIGHT);
+				g.fillRect(0, y, getWidth(), rowHeight);
 			}
 
 			// Amount, right-aligned into its own column so the bars all start together.
 			g.setColor(AXIS_COLOR);
 			final int labelWidth = fm.stringWidth(row.label);
-			g.drawString(row.label, barLeft - COUNT_GAP - labelWidth, y + fm.getAscent());
+			g.drawString(row.label, barLeft - COUNT_GAP - labelWidth,
+				y + fm.getAscent() + (paired ? -1 : 0));
 
-			if (row.count == 0)
+			final int barY = paired
+				? y + 1
+				: y + (rowHeight - barHeight) / 2;
+
+			if (row.count > 0)
 			{
-				continue;
-			}
+				final double value = paired ? share(row.count, total) : row.count;
+				final boolean runsOff = row.offScale && value > scale;
+				final int length = runsOff
+					? barMax
+					: Math.max(MIN_BAR, (int) Math.round(barMax * value / scale));
 
-			final boolean runsOff = row.offScale && row.count > peak;
-			final int length = runsOff
-				? barMax
-				: Math.max(MIN_BAR, (int) Math.round((double) barMax * row.count / scale));
+				g.setColor(row.color);
+				g.fillRect(barLeft, barY, length, barHeight);
 
-			final int barY = y + (ROW_HEIGHT - BAR_HEIGHT) / 2;
-			g.setColor(row.color);
-			g.fillRect(barLeft, barY, length, BAR_HEIGHT);
-
-			if (row.killCount > 0 && !runsOff)
-			{
-				// The killing blows sit at the end of their bar in their own colour, so a bar
-				// that owes part of its length to capped hits says so.
-				final int segment = Math.min(length,
-					Math.max(1, (int) Math.round((double) barMax * row.killCount / scale)));
-				g.setColor(KILL_COLOR);
-				g.fillRect(barLeft + length - segment, barY, segment, BAR_HEIGHT);
-			}
-
-			if (runsOff)
-			{
-				// Tear the end off so it reads as "longer than the chart" rather than as a bar
-				// that happens to reach the edge.
-				g.setColor(getBackground());
-				for (int notch = 0; notch < 3; notch++)
+				if (row.killCount > 0 && !runsOff)
 				{
-					final int nx = barLeft + length - 1 - notch * 3;
-					g.drawLine(nx, barY, nx, barY + BAR_HEIGHT - 1);
+					// The killing blows sit at the end of their bar in their own colour, so a bar
+					// that owes part of its length to capped hits says so.
+					final double killValue = paired ? share(row.killCount, total) : row.killCount;
+					final int segment = Math.min(length,
+						Math.max(1, (int) Math.round(barMax * killValue / scale)));
+					g.setColor(KILL_COLOR);
+					g.fillRect(barLeft + length - segment, barY, segment, barHeight);
+				}
+
+				if (runsOff)
+				{
+					tear(g, barLeft + length, barY, barHeight);
+				}
+
+				g.setColor(row.color);
+				g.drawString(Integer.toString(row.count), barLeft + length + COUNT_GAP,
+					y + fm.getAscent() + (paired ? -1 : 0));
+			}
+
+			if (paired && row.otherCount > 0)
+			{
+				final double value = share(row.otherCount, otherTotal);
+				final boolean runsOff = row.offScale && value > scale;
+				final int length = runsOff
+					? barMax
+					: Math.max(MIN_BAR, (int) Math.round(barMax * value / scale));
+				final int otherY = barY + barHeight + PAIR_BAR_GAP;
+
+				g.setColor(COMMUNITY_COLOR);
+				g.fillRect(barLeft, otherY, length, barHeight);
+				if (runsOff)
+				{
+					tear(g, barLeft + length, otherY, barHeight);
 				}
 			}
-
-			g.setColor(row.color);
-			g.drawString(Integer.toString(row.count), barLeft + length + COUNT_GAP, y + fm.getAscent());
 		}
 
 		if (firstDamageRow > 0)
@@ -291,17 +388,51 @@ public class HistogramPanel extends JPanel
 		}
 	}
 
+	/**
+	 * Tears the end off a bar so it reads as "longer than the chart" rather than as a bar that
+	 * happens to reach the edge.
+	 */
+	private void tear(Graphics2D g, int end, int barY, int barHeight)
+	{
+		g.setColor(getBackground());
+		for (int notch = 0; notch < 3; notch++)
+		{
+			final int nx = end - 1 - notch * 3;
+			g.drawLine(nx, barY, nx, barY + barHeight - 1);
+		}
+	}
+
+	private static double share(int part, int whole)
+	{
+		return whole <= 0 ? 0 : (double) part / whole;
+	}
+
+	/** The tallest damage share in either series; what both are drawn against. */
+	private double peakShare()
+	{
+		double highest = 0;
+		for (int i = firstDamageRow; i < rows.size(); i++)
+		{
+			final Row row = rows.get(i);
+			highest = Math.max(highest, share(row.count, total));
+			highest = Math.max(highest, share(Math.max(0, row.otherCount), otherTotal));
+		}
+		return highest <= 0 ? 1 : highest;
+	}
+
 	private int rowTop(int index)
 	{
-		return TOP_PAD + index * ROW_HEIGHT + (index >= firstDamageRow && firstDamageRow > 0 ? DIVIDER_HEIGHT : 0);
+		return TOP_PAD + index * rowHeight()
+			+ (index >= firstDamageRow && firstDamageRow > 0 ? DIVIDER_HEIGHT : 0);
 	}
 
 	private int rowAt(int y)
 	{
+		final int rowHeight = rowHeight();
 		for (int i = 0; i < rows.size(); i++)
 		{
 			final int top = rowTop(i);
-			if (y >= top && y < top + ROW_HEIGHT)
+			if (y >= top && y < top + rowHeight)
 			{
 				return i;
 			}

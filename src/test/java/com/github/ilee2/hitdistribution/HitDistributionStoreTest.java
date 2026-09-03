@@ -1,6 +1,10 @@
 package com.github.ilee2.hitdistribution;
 
 import com.google.gson.Gson;
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -14,6 +18,8 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
@@ -174,7 +180,7 @@ public class HitDistributionStoreTest
 	}
 
 	@Test
-	public void upgradeDropsDefenceFromOlderLevelArraysAndKeepsKeys()
+	public void upgradeDropsDefenceFromOlderLevelArrays()
 	{
 		final Gson gson = new Gson();
 		final String json = "{\"version\":5,\"npcNames\":{},\"itemNames\":{},\"fights\":[],\"recentHits\":[],"
@@ -196,23 +202,170 @@ public class HitDistributionStoreTest
 		data.upgrade();
 		assertEquals(HistoryData.CURRENT_VERSION, data.getVersion());
 
+		// The two records describe different levels, so they stay two records. Their keys are
+		// recomputed from the migrated fields (format 8), so neither answers to the name it was
+		// stored under any more.
+		assertEquals(2, data.getContexts().size());
+		assertNull(data.getContexts().get("k5"));
+		assertNull(data.getContexts().get("k7"));
+
 		// Format 5: Attack, Strength, Defence, Ranged, Magic. Defence goes, order is kept.
-		final CombatContext five = data.getContexts().get("k5").getContext();
+		final CombatContext five = contextWithAttacks(data, 4);
 		assertArrayEquals(new int[]{118, 112, 90, 80}, five.getBoosted());
 		assertArrayEquals(new int[]{99, 99, 90, 80}, five.getReal());
-		assertEquals("k5", five.getKey());
 		assertEquals(4151, five.getWeaponId());
 		assertEquals(4, five.getAttackSpeed());
 
 		// Before format 4 the arrays ran on to Hitpoints and Prayer; those fall off the end.
-		final CombatContext seven = data.getContexts().get("k7").getContext();
+		final CombatContext seven = contextWithAttacks(data, 1);
 		assertArrayEquals(new int[]{1, 2, 4, 5}, seven.getBoosted());
-		assertEquals("k7", seven.getKey());
+
+		// Every record is stored under the key its own fields produce.
+		for (Map.Entry<String, ContextStats> e : data.getContexts().entrySet())
+		{
+			assertEquals(e.getKey(), e.getValue().getContext().getKey());
+		}
 
 		// Already current: untouched.
 		final CombatContext current = context(4151, CombatStyle.MELEE, 4, 100);
 		assertEquals(CombatContext.SKILL_NAMES.length, current.getBoosted().length);
 		assertSame(current, current.withCurrentLevelShape());
+	}
+
+	@Test
+	public void upgradeMergesRecordsLeftUnderStaleKeys()
+	{
+		// Three records with identical fields under three different keys: what versions 3, 4 and 6
+		// left behind every time they removed something from the key.
+		final String json = "{\"version\":7,\"npcNames\":{},\"itemNames\":{},"
+			+ "\"fights\":[" + fightJson("b") + "],"
+			+ "\"recentHits\":[" + hitJson("c", 7) + "],"
+			+ "\"contexts\":{"
+			+ "\"a\":" + staleStatsJson("a", "[2,0,1]", "[0,0,0,1]", 4, 4, 1, 100, 200)
+			+ ",\"b\":" + staleStatsJson("b", "[0,0,3]", "null", 3, 3, 0, 150, 250)
+			+ ",\"c\":" + staleStatsJson("c", "[1]", "null", 1, 1, 2, 50, 300)
+			+ "}}";
+
+		final HistoryData data = new Gson().fromJson(json, HistoryData.class);
+		assertEquals(3, data.getContexts().size());
+		data.upgrade();
+
+		assertEquals(HistoryData.CURRENT_VERSION, data.getVersion());
+		assertEquals(1, data.getContexts().size());
+
+		final Map.Entry<String, ContextStats> only = data.getContexts().entrySet().iterator().next();
+		final ContextStats stats = only.getValue();
+		assertEquals(only.getKey(), stats.getContext().getKey());
+		assertNotEquals("a", only.getKey());
+
+		// Counters add up and histograms sum index by index, at the length of the longest.
+		assertArrayEquals(new int[]{3, 0, 4}, stats.getCounts());
+		assertArrayEquals(new int[]{0, 0, 0, 1}, stats.getKillCounts());
+		assertEquals(8, stats.getAttacks());
+		assertEquals(8, stats.getHitsplats());
+		assertEquals(3, stats.getSplashes());
+		assertEquals(50, stats.getFirstSeen());
+		assertEquals(300, stats.getLastSeen());
+
+		// The fight and the logged hit followed their record to its new key.
+		assertEquals(only.getKey(), data.getFights().get(0).getContextKey());
+		assertEquals(only.getKey(), data.getRecentHits().get(0).getContextKey());
+	}
+
+	@Test
+	public void loadMergesStaleKeysAndKeepsTheHitLogPointingAtThem()
+	{
+		final String json = "{\"version\":7,\"npcNames\":{},\"itemNames\":{},"
+			+ "\"fights\":[" + fightJson("b") + "],"
+			+ "\"recentHits\":[" + hitJson("b", 2) + "," + hitJson("a", 2) + "],"
+			+ "\"contexts\":{"
+			+ "\"a\":" + staleStatsJson("a", "[0,0,2]", "null", 2, 2, 0, 100, 200)
+			+ ",\"b\":" + staleStatsJson("b", "[0,0,1]", "null", 1, 1, 0, 150, 250)
+			+ "}}";
+
+		writeHistory("Carol", json);
+
+		final HitDistributionStore store = new HitDistributionStore(new Gson());
+		store.setDirectory(folder.getRoot());
+		store.load("Carol");
+
+		assertEquals(1, store.getContextCount());
+
+		final Aggregate all = store.aggregate(HistoryFilter.ALL);
+		assertEquals(3, all.getAttacks());
+		assertEquals(3, all.getHitsplats());
+		assertEquals(6, all.getTotalDamage());
+
+		// Both logged hits still resolve to a context, so both are still listed. Before the merge
+		// one of them pointed at a key nothing answered to and vanished from the panel.
+		assertEquals(2, store.recentHits(HistoryFilter.ALL, 10).size());
+
+		// The merge is written back on the next save, at the current version.
+		store.recordHit(store.contextFor(store.recentHits(HistoryFilter.ALL, 1).get(0).getContextKey(),
+			HistoryScope.ALL_TIME), 5, false);
+		store.save();
+		store.unload();
+		store.load("Carol");
+		assertEquals(1, store.getContextCount());
+		assertEquals(4, store.aggregate(HistoryFilter.ALL).getHitsplats());
+	}
+
+	/** One {@code ContextStats} of the fixed setup used by the merge tests, under {@code key}. */
+	private static String staleStatsJson(String key, String counts, String killCounts, int attacks,
+		int hitsplats, int splashes, long firstSeen, long lastSeen)
+	{
+		return "{\"context\":{\"gear\":[-1,-1,-1,4151,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],"
+			+ "\"boosted\":[99,99,1,1],\"real\":[99,99,1,1],\"prayers\":[\"PIETY\"],"
+			+ "\"weaponCategory\":22,\"styleIndex\":1,\"styleName\":\"Aggressive\","
+			+ "\"combatStyle\":\"MELEE\",\"spellId\":0,\"special\":false,\"npcId\":9036,"
+			+ "\"targetOverheads\":[],\"styleProtected\":false,\"attackSpeed\":4,"
+			+ "\"key\":\"" + key + "\"},"
+			+ "\"counts\":" + counts
+			+ (killCounts.equals("null") ? "" : ",\"killCounts\":" + killCounts)
+			+ ",\"attacks\":" + attacks + ",\"hitsplats\":" + hitsplats + ",\"splashes\":" + splashes
+			+ ",\"firstSeen\":" + firstSeen + ",\"lastSeen\":" + lastSeen + "}";
+	}
+
+	private static String fightJson(String contextKey)
+	{
+		return "{\"timestamp\":1,\"npcId\":9036,\"contextKey\":\"" + contextKey + "\",\"weaponId\":4151,"
+			+ "\"durationTicks\":10,\"attacks\":2,\"hitsplats\":2,\"damage\":4,\"misses\":0,"
+			+ "\"splashes\":0,\"wastedTicks\":0,\"killed\":true}";
+	}
+
+	private static String hitJson(String contextKey, int damage)
+	{
+		return "{\"timestamp\":2,\"npcId\":9036,\"weaponId\":4151,\"damage\":" + damage
+			+ ",\"max\":false,\"contextKey\":\"" + contextKey + "\"}";
+	}
+
+	private void writeHistory(String player, String json)
+	{
+		try
+		{
+			Files.write(new File(folder.getRoot(), player + ".json").toPath(),
+				json.getBytes(StandardCharsets.UTF_8));
+		}
+		catch (IOException e)
+		{
+			throw new AssertionError("Unable to write the test history file", e);
+		}
+	}
+
+	/** @return the one context in {@code data} whose record holds {@code attacks} attacks. */
+	private static CombatContext contextWithAttacks(HistoryData data, int attacks)
+	{
+		CombatContext found = null;
+		for (ContextStats stats : data.getContexts().values())
+		{
+			if (stats.getAttacks() == attacks)
+			{
+				assertNull("more than one record holds " + attacks + " attacks", found);
+				found = stats.getContext();
+			}
+		}
+		assertNotNull("no record holds " + attacks + " attacks", found);
+		return found;
 	}
 
 	@Test
@@ -315,6 +468,34 @@ public class HitDistributionStoreTest
 		final FilterOptions withBody = store.options(false, new HistoryFilter(null, null, body, null, null));
 		assertEquals(1, withBody.getWeapons().size());
 		assertEquals(2, withBody.getGearBySlot().get(BODY_SLOT).size());
+	}
+
+	@Test
+	public void anEmptySlotIsAChoiceOfItsOwn()
+	{
+		final HitDistributionStore store = new HitDistributionStore(new Gson());
+		final int torva = 26384;
+		final CombatContext inTorva = AttackMatcherTest.builder(CombatStyle.MELEE, 4, 100)
+			.gear(gearWith(4151, BODY_SLOT, torva))
+			.build();
+		final CombatContext bare = context(4151, CombatStyle.MELEE, 4, 100);
+
+		store.recordAttack(inTorva, 0, 4);
+		store.recordHit(inTorva, 30, false);
+		store.recordAttack(bare, 0, 4);
+		store.recordHit(bare, 10, false);
+
+		// Having worn nothing in a slot is a setup like any other, so it is offered alongside the
+		// items and can be filtered on. Without it, "no body" is only reachable as "all bodies".
+		final List<FilterOptions.Option> bodies = store.options(false, HistoryFilter.ALL)
+			.getGearBySlot().get(BODY_SLOT);
+		assertEquals(2, bodies.size());
+		assertTrue(bodies.stream().anyMatch(o -> o.getId() != null && o.getId() == CombatContext.NO_ITEM));
+
+		final Aggregate nothing = store.aggregate(new HistoryFilter(null, null,
+			Collections.singletonMap(BODY_SLOT, CombatContext.NO_ITEM), null, null));
+		assertEquals(1, nothing.getAttacks());
+		assertEquals(10, nothing.getTotalDamage());
 	}
 
 	@Test

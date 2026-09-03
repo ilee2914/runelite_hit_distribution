@@ -1,5 +1,6 @@
 package com.github.ilee2.hitdistribution.ui;
 
+import com.github.ilee2.hitdistribution.CombatContext;
 import com.github.ilee2.hitdistribution.FilterOptions;
 import java.awt.Color;
 import java.awt.Cursor;
@@ -7,6 +8,7 @@ import java.awt.Dimension;
 import java.awt.GridLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -31,7 +33,9 @@ import net.runelite.client.util.AsyncBufferedImage;
  * players already know do not.
  *
  * <p>A slot with a filter on it shows the chosen item and an orange border. Clicking a slot lists
- * only what was actually worn there in the hits that match the rest of the filter.
+ * only what was actually worn there in the hits that match the rest of the filter, including
+ * having worn nothing there: "no shield" and "any shield" are different questions, and both are
+ * askable.
  */
 class EquipmentFilterPanel extends JPanel
 {
@@ -44,6 +48,12 @@ class EquipmentFilterPanel extends JPanel
 	private static final int CELL = 32;
 	private static final int GAP = 2;
 	private static final int MAX_SUGGESTIONS = 20;
+
+	/**
+	 * Text drawn in a slot pinned to "nothing was worn here". Plain ASCII: the RuneScape fonts
+	 * have no glyph for the symbols that would say this more compactly.
+	 */
+	private static final String NOTHING_MARK = "none";
 
 	private static final Color EMPTY_SLOT = new Color(40, 40, 40);
 	private static final Color SLOT_BORDER = new Color(70, 70, 70);
@@ -158,15 +168,17 @@ class EquipmentFilterPanel extends JPanel
 					continue;
 				}
 
-				if (chosen > 0)
+				if (isNothing(chosen))
 				{
-					final AsyncBufferedImage image = itemManager.getImage(chosen);
-					image.addTo(label);
+					// An unfiltered slot is also drawn empty, so the pinned-to-nothing case needs
+					// a mark of its own or the two read the same at a glance.
+					label.setText(NOTHING_MARK);
+					label.setForeground(ColorScheme.BRAND_ORANGE);
 				}
 				else
 				{
-					label.setText("-");
-					label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+					final AsyncBufferedImage image = itemManager.getImage(chosen);
+					image.addTo(label);
 				}
 				label.setToolTipText(EquipmentLayout.name(slot) + ": " + labelFor(index, chosen));
 			}
@@ -185,7 +197,32 @@ class EquipmentFilterPanel extends JPanel
 				return option.getLabel();
 			}
 		}
-		return itemId > 0 ? "item " + itemId : "nothing";
+		if (isNothing(itemId))
+		{
+			return slot == CombatContext.WEAPON_SLOT ? "Unarmed" : "Nothing";
+		}
+		return "item " + itemId;
+	}
+
+	/** The store writes {@link CombatContext#NO_ITEM} for an empty slot; be lenient about 0. */
+	private static boolean isNothing(@Nullable Integer itemId)
+	{
+		return itemId != null && itemId <= 0;
+	}
+
+	private JMenuItem choice(int slot, FilterOptions.Option option)
+	{
+		final Integer itemId = option.getId();
+		final JMenuItem item = new JMenuItem(option.getLabel() + "  (" + option.getAttacks() + ")");
+		item.setFont(FontManager.getRunescapeSmallFont());
+		if (!isNothing(itemId))
+		{
+			final AsyncBufferedImage image = itemManager.getImage(itemId, 1, false);
+			item.setIcon(new ImageIcon(image));
+			image.onLoaded(item::repaint);
+		}
+		item.addActionListener(e -> listener.slotChanged(slot, itemId));
+		return item;
 	}
 
 	private void showChoices(EquipmentInventorySlot slot, JLabel anchor)
@@ -202,32 +239,46 @@ class EquipmentFilterPanel extends JPanel
 
 		final JMenuItem any = new JMenuItem("Any " + EquipmentLayout.name(slot).toLowerCase());
 		any.setFont(FontManager.getRunescapeSmallFont());
+		any.setToolTipText("Do not filter on this slot");
 		any.addActionListener(e -> listener.slotChanged(index, null));
 		popup.add(any);
 
-		int shown = 0;
+		// "Worn nothing here" is a choice like any other, but it is one attack among thousands in
+		// most histories, so it is lifted out of the sorted list rather than left to be cut off by
+		// the suggestion cap. It also sits next to "Any", which is the option it is confused with.
+		final List<FilterOptions.Option> items = new ArrayList<>(choices.size());
+		FilterOptions.Option nothing = null;
 		for (FilterOptions.Option option : choices)
+		{
+			if (isNothing(option.getId()))
+			{
+				nothing = option;
+			}
+			else
+			{
+				items.add(option);
+			}
+		}
+
+		if (nothing != null)
+		{
+			popup.add(choice(index, nothing));
+		}
+
+		popup.addSeparator();
+
+		int shown = 0;
+		for (FilterOptions.Option option : items)
 		{
 			if (shown++ >= MAX_SUGGESTIONS)
 			{
-				final JMenuItem more = new JMenuItem((choices.size() - MAX_SUGGESTIONS) + " more not shown");
+				final JMenuItem more = new JMenuItem((items.size() - MAX_SUGGESTIONS) + " more not shown");
 				more.setFont(FontManager.getRunescapeSmallFont());
 				more.setEnabled(false);
 				popup.add(more);
 				break;
 			}
-
-			final Integer itemId = option.getId();
-			final JMenuItem item = new JMenuItem(option.getLabel() + "  (" + option.getAttacks() + ")");
-			item.setFont(FontManager.getRunescapeSmallFont());
-			if (itemId != null && itemId > 0)
-			{
-				final AsyncBufferedImage image = itemManager.getImage(itemId, 1, false);
-				item.setIcon(new ImageIcon(image));
-				image.onLoaded(item::repaint);
-			}
-			item.addActionListener(e -> listener.slotChanged(index, itemId));
-			popup.add(item);
+			popup.add(choice(index, option));
 		}
 
 		popup.show(anchor, 0, anchor.getHeight());

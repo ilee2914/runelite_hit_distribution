@@ -6,11 +6,16 @@ Record every hit the player deals, keyed by the full combat context it was dealt
 the levels that affect damage, the prayers that affect damage, style, spell, special attack,
 target NPC and the overhead prayer that NPC was using), and show the damage
 distribution, accuracy, splash rate, DPS and wasted ticks in a side panel filterable by monster,
-style, target prayer and any worn equipment slot. A later phase may add an opt-in upload so players can compare
-distributions; that is not built and must be opt-in with a data warning when it is.
+style, target prayer and any worn equipment slot. An opt-in upload shares those statistics with a
+community server so the panel can draw everyone else's distribution beside the player's own; it is
+off by default and sends nothing until it is turned on.
 
 This plugin only observes. It reads hitsplats, animations, graphics, varbits and containers, and
 writes a local JSON file. It never sends input, queues a menu action, or changes game state.
+
+The server is a separate, private repository (`hit_distribution_server`, a sibling of this one).
+Its design, the wire format and the operational rules live in `../server_plan.md`, which is the
+specification for anything under the `sync` package. Read it before changing the payload.
 
 ## Naming
 
@@ -57,6 +62,14 @@ stat, DPS or wasted-tick tracking. Do not reuse any of its identifiers.
 | `ui.EquipmentPanel` | Worn gear as item icons in the game's equipment layout |
 | `ui.EquipmentFilterPanel` | The same layout, clickable, as the per-slot gear filter |
 | `ui.EquipmentLayout` | The slot arrangement both of those share |
+| `LevelMatch` | How closely a community comparison matches the player's levels |
+| `sync.SyncTransport` | The two HTTP calls, behind an interface so the rest is testable |
+| `sync.OkHttpTransport` | The real one, over RuneLite's injected `OkHttpClient` |
+| `sync.UploadBatch` | One upload, exactly as it goes over the wire |
+| `sync.CommunitySync` | When to upload, the failure policy, the panel's status line |
+| `sync.CommunityQuery` | A community lookup as a URL, built from the panel's own filter |
+| `sync.CommunityAggregate` | A community answer, with the same derived statistics as `Aggregate` |
+| `sync.CommunityClient` | Fetches and caches answers off the client and Swing threads |
 
 ### Attribution model
 
@@ -143,8 +156,16 @@ Notes:
    (`@Slf4j`, `@Getter`), Guice DI, tabs for indentation, braces on their own line.
 4. **No automation**: this plugin only ever observes and records. Never add anything that sends
    input, queues a menu action, or changes game state.
-5. **Local only**: no network calls. Any future upload must be a separate, default-off setting
-   with a warning stating exactly what is sent, per Plugin Hub rules.
+5. **The network is opt-in, one-way by default, and never on a hot path**: nothing leaves the
+   client unless `uploadEnabled` is on, and its description states exactly what is sent. Never
+   send the character name, account hash, world, position, chat, or anything about another
+   player; the uploader id is a random UUID in the history file. Use the **injected**
+   `OkHttpClient` (through `sync.SyncTransport`), never a new one. Uploads happen on the
+   executor, at most one at a time, on the same occasions the file is written: a timer, logout,
+   client shutdown, and a catch-up after login. Never per attack, never on the client thread,
+   never blocking Swing. Counters sent are cumulative, never deltas, so a retry cannot double
+   count. `CommunitySync.DEFAULT_BASE_URL` is empty until the Worker is deployed, and an empty
+   base URL disables every request whatever the config says.
 6. **Keep the matcher pure**: `AttackMatcher` must stay free of client types so it remains unit
    testable. Client access belongs in `CombatTracker`.
 7. **Package**: `com.github.ilee2.hitdistribution` — all classes live under this package.
@@ -152,18 +173,26 @@ Notes:
 9. **Dependencies**: Only libraries available through RuneLite's client dependency. No SQLite,
    no charting library; the Hub restricts dependencies and native code.
 10. **File format**: Bump `HistoryData.CURRENT_VERSION` and handle the old shape in
-    `HitDistributionStore.read` if fields change. Player files are not to be silently discarded.
-    Adding a field to `CombatContext` changes every new key, so old records stay in the file
-    under their old keys rather than merging with new ones. Currently at version 6. Where the
-    *shape* of a stored record changes (version 6 dropped Defence from the level arrays),
-    `HistoryData.upgrade` migrates the record in place and keeps its key, via
-    `ContextStats.migrate` and a key-preserving `CombatContext` copy. Version 7 added
-    `ContextStats.killCounts` beside `counts`; it reads as null from older files and the getter
-    hides that, so nothing migrates. `HitDistributionStore.load`
-    reads the file before it sets the player name, and `read` catches every RuntimeException, so
-    a failed read can never leave an empty store that the autosave then writes over the file.
-11. **Identifiers are published**: the config group and data directory cannot change after
-    release without losing people's settings and history. Treat them as frozen.
+    `HistoryData.upgrade` if fields change. Player files are not to be silently discarded.
+    Currently at version 8. Where the *shape* of a stored record changes (version 6 dropped
+    Defence from the level arrays), the record is migrated in place via `ContextStats.migrate`
+    and a key-preserving `CombatContext` copy.
+    **Version 8 recomputes every key and merges the records that collide.** Versions 3, 4 and 6
+    each removed something from the key but left existing records under the key they were written
+    with, so a setup recorded before one of those changes sat frozen and never received another
+    hit; one real file held 983 records that were 140 setups. Any future change to what
+    `CombatContext.computeKey` hashes must do the same: recompute, merge with
+    `ContextStats.mergeFrom`, and remap `KillRecord.contextKey` and `HitRecord.contextKey`, or
+    fights and logged hits will point at keys nothing answers to.
+    A key change is also a **server** event: every row a player has uploaded is keyed the old way,
+    so bump the server's `min_key_version` on the same day (see `../server_plan.md`, section 8.5).
+    `HitDistributionStore.load` reads the file before it sets the player name, and `read` catches
+    every RuntimeException, so a failed read can never leave an empty store that the autosave then
+    writes over the file.
+11. **Identifiers are frozen once published**: the config group and data directory cannot change
+    after release without losing people's settings and history. The plugin is **not** on the Hub
+    yet, so a rename is still cheap; it must happen before release, and it must move the config
+    group, the package, the data directory, the repository and the Worker name together.
 12. **Only damage-affecting state belongs in the context**: `DamagePrayers` excludes prayers
     that cannot change the damage dealt, and `CombatContext.SKILL_NAMES` excludes Hitpoints,
     Prayer and Defence. Anything that drifts during a fight but cannot change the damage will otherwise turn

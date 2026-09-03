@@ -1,5 +1,87 @@
 # Journal
 
+## 2026-09-03 -- Format 8 key merge, and the opt-in community upload
+
+### The bug that had to be fixed first
+
+`HistoryData.upgrade` migrated the *shape* of old records but kept the key each was stored under.
+Versions 3, 4 and 6 had each removed something from the key, so a setup recorded before one of
+those changes sat in its own frozen record and never received another hit. The developer's own
+file held **983 records that were 140 setups**, with half the hitsplats stranded in records the
+tracker could no longer reach.
+
+Format 8 recomputes every key from the fields the record actually holds (`CombatContext.rekeyed`)
+and folds the collisions together (`ContextStats.mergeFrom`: histograms sum index by index, every
+counter adds, the window widens). `KillRecord.contextKey` and `HitRecord.contextKey` are remapped
+in the same pass, or the fight list and the hit log would point at keys nothing answers to.
+
+Run over the real file, with every total checked before and after:
+
+| | Before | After |
+| --- | --- | --- |
+| Contexts | 983 | 140 |
+| Hitsplats | 2,044 | 2,044 |
+| Attacks | 2,201 | 2,201 |
+| Damage | 28,692 | 28,692 |
+| Splashes | 169 | 169 |
+| Killing blows | 79 | 79 |
+| Dangling fights / hits | | 0 of 239 / 0 of 500 |
+
+`markKillingBlow` and `undoSplash` now call `touch()`. They changed a record without advancing
+`lastSeen`, which the upload uses to decide what is new.
+
+### The community upload
+
+Off by default; nothing leaves the client until `uploadEnabled` is on. New `sync` package:
+`SyncTransport` (an interface, so the protocol is testable with no network and no new test
+dependency), `OkHttpTransport` over RuneLite's **injected** `OkHttpClient` with 5 s connect and
+10 s read timeouts, `UploadBatch` as the wire format, and `CommunitySync` holding the whole
+failure policy in one place.
+
+Decisions worth keeping:
+
+- **Cumulative counters, never deltas.** A record is sent whole and the server replaces it, so a
+  retry, a crash between the response and the next save, and an out-of-order arrival are all
+  harmless. There is no outbox and no batch id.
+- **Capture on the calling thread, send on the executor.** On logout the store is unloaded moments
+  later; a capture that ran on the executor would find nothing.
+- **The watermark survives a logout.** `markUploaded` writes straight into the character's file
+  when the response lands after the unload. Without that, any session shorter than the upload
+  timer would never advance its watermark and would re-send its whole history at every login.
+- **Triggers**: a timer (30 min by default), logout, `ClientShutdown` (held briefly with
+  `waitFor`), and a catch-up ten seconds after login, which is what covers a power cut.
+- `CommunitySync.DEFAULT_BASE_URL` is **empty** until the Worker is deployed, and an empty base
+  URL disables every request whatever the config says.
+
+### The comparison in the panel
+
+`HistogramPanel` grows a second bar per row when a community answer is present, and both series
+switch from raw counts to **share of attempts**: everyone together has thousands of times more
+hits than one player, so raw counts would draw one visible series and one flat line. The stats
+grid grows a third column for the statistics that describe the shape of a distribution and how
+well it was used; running totals stay in one column, because they only say how long someone has
+been playing.
+
+The community line is **everyone, the reader included**, labelled as such, with the number of
+*other* players beside it. Subtracting the reader's own rows from a total the server summed before
+their last upload goes negative; this is simpler and always right.
+
+The level match is a **bracket** on the one skill that drives the style's damage (Strength, Ranged
+or Magic), not "within five of you", because a bracket is a single integer the server can index.
+An earlier draft banded the minimum of all four skills, which is meaningless: a melee player's
+Ranged level is noise.
+
+### Tests
+
+84 green. New: three for the format 8 merge (including one that loads a file from disk and proves
+the hit log still resolves), and thirteen for the upload protocol covering every status code in
+the failure policy, the watermark after a logout, the URL builder and the answer parser.
+
+### Still to do
+
+`DEFAULT_BASE_URL` is empty, so the community features are inert until the Worker is deployed and
+the URL is filled in. The plugin has not been verified in a live client since these changes.
+
 ## 2026-09-02 — Initial build
 
 ### Decisions
@@ -545,3 +627,37 @@ that goes blank at the moment of death is a panel you cannot read the kill from.
 says which it is showing: "Fighting for 1m 12s", "Vorkath died 34s ago", or "No fight yet".
 
 Tests are at 68.
+
+
+### Target protection as a switch, and an empty gear slot as a choice
+
+The Target row was a three-value dropdown -- "All targets", "Not protecting", "Praying against
+me" -- sitting among the monster and style filters, where its name said nothing about what it
+did. It is now a checkbox, "Count attacks into protection", built the same way as the
+killing-blow switch: it writes a `countProtectedAttacks` config item through `ConfigManager`, so
+the config panel and the sidebar are the same setting, and a note on the right of the row reads
+"142 in" in the protected colour or "142 out" in grey.
+
+Going from three states to two drops the "only the protected ones" view. That view was the one
+nobody asked for: the question a hit distribution answers is what a setup does, and a target
+praying against the style is a different distribution that drags every average down, so the
+useful choice is whether those attacks are in the sample at all. Default stays off, which is what
+the dropdown defaulted to. "Reset filter" no longer touches it, because it is a saved display
+setting now rather than part of the filter, exactly like the killing-blow switch.
+
+The count of held-back attacks comes from the same filter with the protection dimension dropped
+(`HistoryFilter.withoutProtection`), so it answers "how much is missing" rather than "how much is
+shown". When the switch is on the filter is already unrestricted, and `fillProtection` reads the
+aggregate on screen instead of walking the store a second time.
+
+Filtering a gear slot on having worn *nothing* there already worked -- the store writes
+`CombatContext.NO_ITEM` for an empty slot and `matches` compares it like any other id -- but it
+was close to unreachable. The empty entry sorted into the popup by attack count, and in a slot
+with more than twenty items the `MAX_SUGGESTIONS` cap could cut it off entirely; the entry it
+sits beside, "Any ring", means the opposite thing; and a slot pinned to nothing drew a bare "-",
+which reads the same as a slot with no filter on it. So it is now lifted out of the sorted list
+and pinned directly under "Any" behind a separator, where the cap can never reach it, and a
+pinned-to-nothing slot draws "none" in the filter colour. `NO_ITEM` became public so the ui
+package names the same constant the store does rather than spelling -1 twice.
+
+Tests are at 69: `anEmptySlotIsAChoiceOfItsOwn` covers the store end of it, which had no test.

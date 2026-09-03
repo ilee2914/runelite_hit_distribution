@@ -1,5 +1,6 @@
 package com.github.ilee2.hitdistribution;
 
+import java.util.Map;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -55,5 +56,15 @@ public class HitRecord
 	void markKillingBlow()
 	{
 		killingBlow = true;
+	}
+
+	/** Points this hit at the key its context now lives under; see {@code KillRecord.remapContext}. */
+	void remapContext(Map<String, String> newKeys)
+	{
+		final String moved = newKeys.get(contextKey);
+		if (moved != null)
+		{
+			contextKey = moved;
+		}
 	}
 }

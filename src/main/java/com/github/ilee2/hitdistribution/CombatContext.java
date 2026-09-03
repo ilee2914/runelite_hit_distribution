@@ -25,7 +25,10 @@ public class CombatContext
 {
 	public static final int GEAR_SLOTS = 14;
 	public static final int WEAPON_SLOT = 3;
-	static final int NO_ITEM = -1;
+
+	/** Value stored in {@link #gear} for a slot with nothing in it, and the id the gear filter
+	 * uses to ask for exactly that. */
+	public static final int NO_ITEM = -1;
 
 	/**
 	 * Order of the entries in {@link #boosted} and {@link #real}: the levels that can move the
@@ -145,6 +148,20 @@ public class CombatContext
 			return this;
 		}
 		return new CombatContext(this, dropLegacyDefence(boosted), dropLegacyDefence(real));
+	}
+
+	/**
+	 * @return a copy of this context whose {@link #getKey() key} is computed from the fields it
+	 * actually holds now. Records written before format 6 keep the key they were stored under
+	 * even after {@link #withCurrentLevelShape()} has rewritten their levels, so two records
+	 * that are now identical can still sit under two different keys; this is what
+	 * {@code HistoryData}'s format 8 migration uses to bring them back together. It also
+	 * normalises a null prayer or overhead list to an empty one, so a record from a build that
+	 * predates those fields keys the same as a fresh one with neither.
+	 */
+	CombatContext rekeyed()
+	{
+		return toBuilder().build();
 	}
 
 	private static int[] dropLegacyDefence(int[] levels)

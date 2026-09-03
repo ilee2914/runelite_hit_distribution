@@ -1,5 +1,9 @@
 package com.github.ilee2.hitdistribution;
 
+import com.github.ilee2.hitdistribution.sync.CommunityClient;
+import com.github.ilee2.hitdistribution.sync.CommunitySync;
+import com.github.ilee2.hitdistribution.sync.OkHttpTransport;
+import com.github.ilee2.hitdistribution.sync.SyncTransport;
 import com.github.ilee2.hitdistribution.ui.HitDistributionPanel;
 import com.google.inject.Provides;
 import java.awt.image.BufferedImage;
@@ -25,6 +29,7 @@ import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.SpriteManager;
+import net.runelite.client.events.ClientShutdown;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -45,6 +50,9 @@ import net.runelite.client.util.ImageUtil;
 public class HitDistributionPlugin extends Plugin
 {
 	private static final long PANEL_REFRESH_SECONDS = 2;
+
+	/** How long after logging in the catch-up upload runs, so it never competes with the login. */
+	private static final int LOGIN_UPLOAD_DELAY_TICKS = 17;
 
 	@Inject
 	private Client client;
@@ -76,10 +84,21 @@ public class HitDistributionPlugin extends Plugin
 	@Inject
 	private ScheduledExecutorService executor;
 
+	@Inject
+	private CommunitySync communitySync;
+
+	@Inject
+	private CommunityClient communityClient;
+
 	private HitDistributionPanel panel;
 	private NavigationButton navButton;
 	private ScheduledFuture<?> refreshTask;
+	private ScheduledFuture<?> uploadTask;
 	private long shownRevision = -1;
+	private long shownCommunityRevision = -1;
+
+	/** Client tick the catch-up upload is due on, or -1 when none is pending. */
+	private int loginUploadTick = -1;
 
 	@Provides
 	HitDistributionConfig provideConfig(ConfigManager configManager)
@@ -87,12 +106,18 @@ public class HitDistributionPlugin extends Plugin
 		return configManager.getConfig(HitDistributionConfig.class);
 	}
 
+	@Provides
+	SyncTransport provideTransport(OkHttpTransport transport)
+	{
+		return transport;
+	}
+
 	@Override
 	protected void startUp()
 	{
 		store.setHitLogSize(config.hitLogSize());
 		panel = new HitDistributionPanel(store, config, configManager, itemManager, spriteManager,
-			this::clearHistory);
+			communityClient, communitySync, this::clearHistory);
 
 		final BufferedImage icon = ImageUtil.loadImageResource(getClass(), "/hit_distribution_icon.png");
 		navButton = NavigationButton.builder()
@@ -105,6 +130,22 @@ public class HitDistributionPlugin extends Plugin
 
 		refreshTask = executor.scheduleAtFixedRate(this::refreshPanelIfChanged,
 			PANEL_REFRESH_SECONDS, PANEL_REFRESH_SECONDS, TimeUnit.SECONDS);
+		scheduleUploads();
+	}
+
+	/**
+	 * Runs the community upload on its own timer, well apart from the autosave. It does nothing at
+	 * all unless the player has opted in, and skips silently when nothing has changed.
+	 */
+	private void scheduleUploads()
+	{
+		if (uploadTask != null)
+		{
+			uploadTask.cancel(false);
+		}
+		final long minutes = Math.max(1, config.uploadMinutes());
+		uploadTask = executor.scheduleWithFixedDelay(
+			() -> communitySync.upload(CommunitySync.Reason.TIMER), minutes, minutes, TimeUnit.MINUTES);
 	}
 
 	@Override
@@ -115,10 +156,17 @@ public class HitDistributionPlugin extends Plugin
 			refreshTask.cancel(false);
 			refreshTask = null;
 		}
+		if (uploadTask != null)
+		{
+			uploadTask.cancel(false);
+			uploadTask = null;
+		}
+		communityClient.clear();
 
 		clientThread.invoke(() ->
 		{
 			tracker.flush();
+			communitySync.upload(CommunitySync.Reason.LOGOUT);
 			tracker.reset();
 			store.unload();
 		});
@@ -134,8 +182,26 @@ public class HitDistributionPlugin extends Plugin
 		if (HitDistributionConfig.GROUP.equals(event.getGroup()))
 		{
 			store.setHitLogSize(config.hitLogSize());
+			if ("uploadMinutes".equals(event.getKey()))
+			{
+				scheduleUploads();
+			}
+			if ("levelMatch".equals(event.getKey()) || "showCommunity".equals(event.getKey()))
+			{
+				communityClient.clear();
+			}
 			shownRevision = -1;
 		}
+	}
+
+	/**
+	 * Holds the client's shutdown for a moment so a last upload can finish. It cannot cover a
+	 * power cut; the catch-up after the next login is what covers that.
+	 */
+	@Subscribe
+	public void onClientShutdown(ClientShutdown event)
+	{
+		event.waitFor(communitySync.upload(CommunitySync.Reason.SHUTDOWN));
 	}
 
 	@Subscribe
@@ -145,8 +211,16 @@ public class HitDistributionPlugin extends Plugin
 		if (state == GameState.LOGIN_SCREEN || state == GameState.HOPPING || state == GameState.CONNECTION_LOST)
 		{
 			tracker.flush();
+			// Before the unload: the batch is built on this thread, and a moment later there is no
+			// file to build it from.
+			communitySync.upload(CommunitySync.Reason.LOGOUT);
 			tracker.reset();
 			store.unload();
+			loginUploadTick = -1;
+		}
+		else if (state == GameState.LOGGED_IN && loginUploadTick < 0)
+		{
+			loginUploadTick = client.getTickCount() + LOGIN_UPLOAD_DELAY_TICKS;
 		}
 	}
 
@@ -154,6 +228,13 @@ public class HitDistributionPlugin extends Plugin
 	public void onGameTick(GameTick tick)
 	{
 		tracker.onGameTick();
+
+		// The catch-up for whatever a crash or a power cut interrupted, once the login has settled.
+		if (loginUploadTick >= 0 && client.getTickCount() >= loginUploadTick)
+		{
+			loginUploadTick = -1;
+			communitySync.upload(CommunitySync.Reason.LOGIN);
+		}
 	}
 
 	@Subscribe
@@ -206,11 +287,14 @@ public class HitDistributionPlugin extends Plugin
 			return;
 		}
 
+		// Either the recorded history or a community answer can change what the panel should show.
 		final long revision = store.getRevision();
-		if (revision == shownRevision)
+		final long communityRevision = communityClient.getRevision();
+		if (revision == shownRevision && communityRevision == shownCommunityRevision)
 		{
 			return;
 		}
+		shownCommunityRevision = communityRevision;
 		shownRevision = revision;
 		SwingUtilities.invokeLater(current::refresh);
 	}

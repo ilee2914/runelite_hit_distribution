@@ -29,15 +29,16 @@ Open the sidebar panel (the bar-chart icon) to see:
   Defensive, Controlled, Rapid, Longrange, Casting, or the spell you cast. The damage type the
   game shows next to it, Stab or Slash or Crush, is not exposed by the client API, so it cannot be
   recorded without a hardcoded weapon table that would go stale on the next update.
-- **Target** starts on "Not protecting". Attacks into a protection prayer are a different
-  distribution and almost never the one you are asking about.
-- A **Target** filter for whether the monster was praying against the style you used. Set it to
-  "Not protecting" to see what your gear really does, or to "Praying against me" to see the cost
-  of attacking into protection.
+- **Count attacks into protection** is off by default, so the numbers describe attacks the
+  monster was *not* praying against. A target praying against the style you used takes far less
+  damage from it, which is a different distribution and almost never the one you are asking
+  about; the note beside the switch says how many attacks are being held back, and turning it on
+  folds them in and adds an "Into protection" line to the summary.
 - A **Gear filter**, folded away until you open it, shaped like the game's equipment tab. Click
   a slot to pick from the items actually worn there in the hits that match everything else. Every
   worn slot moves the damage, so every slot can be filtered, and the weapon is simply the weapon
-  slot rather than a box of its own.
+  slot rather than a box of its own. Having worn *nothing* in a slot is a choice like any other:
+  it sits directly under "Any", and a slot pinned to it shows "none".
 - **Summary** of the matching hits:
   - attacks, hitsplats and total damage
   - average per attack (splashes and zeros included), per hitsplat, and per landed hit
@@ -149,6 +150,34 @@ tools.
 Only the hit log is capped. The statistics and the chart are built from per-context totals that
 are never dropped, so shrinking the log loses recent detail but no history.
 
+## Sharing with other players (optional)
+
+Off by default. Nothing leaves your client until you turn on **Share my hits** in the Community
+section of the settings.
+
+With it on, the panel draws everyone else's distribution beside your own whenever the filter names
+a monster and a weapon, and compares the statistics that describe the shape of a distribution
+rather than how long you have played: average per hitsplat, average per landed hit, accuracy,
+splash rate, max-hit rate, highest hit, DPS and wasted ticks per attack.
+
+What is sent, for each combination of worn gear, Attack/Strength/Ranged/Magic levels, damage
+prayers, attack style, spell, special attack, target monster and the monster's overhead prayer:
+
+- the count of hits at each damage value, and the killing blows separately
+- attacks, hitsplats, splashes, max hits, wasted ticks and active ticks
+- the item and monster names for the ids involved, so other people's panels can label them
+- a random id identifying your history file, so your own numbers can be updated rather than added
+  to twice
+
+What is never sent: your character name, your account, the world, where you are, anything you
+typed, and anything about any other player. The random id is generated locally and is not derived
+from anything about your account. Clearing your history creates a new one.
+
+Your statistics are sent when you log out, when you close the client, once after you log in, and
+on a timer while you play. Never per attack. The panel's bottom line says when the last upload
+happened and shows the first characters of your id; quote it in a GitHub issue if you ever want
+your data removed.
+
 ## Configuration
 
 | Setting | Default | Meaning |
@@ -161,6 +190,10 @@ are never dropped, so shrinking the log loses recent detail but no history.
 | Idle gap | 10 ticks | A pause longer than this is a break, not wasted ticks |
 | Autosave interval | 2 min | How often the file is written while logged in |
 | Debug logging | off | Log each attack, hit and splash decision |
+| Share my hits | **off** | Send your statistics and see everyone else's; see above |
+| Share every | 30 min | How often statistics are sent while you are logged in |
+| Show the community chart | on | Draw everyone else's distribution beside yours |
+| Match levels | Same level bracket | Which other players to compare against: any level, the same five-level bracket of your style's main skill, or exactly your levels |
 
 ## Limitations
 

@@ -1,5 +1,6 @@
 package com.github.ilee2.hitdistribution;
 
+import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -27,4 +28,18 @@ public class KillRecord
 
 	/** False when the NPC despawned or the fight timed out without a death. */
 	private boolean killed;
+
+	/**
+	 * Points this fight at the key its context now lives under. Only the format 8 migration calls
+	 * this: merging two stale records into one moves the record, and a fight left pointing at the
+	 * key it used to sit under would resolve to nothing.
+	 */
+	void remapContext(Map<String, String> newKeys)
+	{
+		final String moved = newKeys.get(contextKey);
+		if (moved != null)
+		{
+			contextKey = moved;
+		}
+	}
 }
