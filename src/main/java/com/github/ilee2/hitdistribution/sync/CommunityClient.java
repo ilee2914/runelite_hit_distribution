@@ -30,6 +30,9 @@ public class CommunityClient
 {
 	private static final long REFRESH_MS = 5L * 60 * 1000;
 
+	/** How long a lookup that failed is left alone for. */
+	private static final long RETRY_MS = 5L * 60 * 1000;
+
 	/** Stop the session cache growing without bound if someone sweeps every filter. */
 	private static final int MAX_ENTRIES = 200;
 
@@ -41,6 +44,12 @@ public class CommunityClient
 
 	private final Map<String, Entry> answers = new ConcurrentHashMap<>();
 	private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
+
+	/**
+	 * When a lookup that failed may be tried again. Without this a failing server would be asked
+	 * again on every panel refresh, which is every two seconds.
+	 */
+	private final Map<String, Long> retryAfter = new ConcurrentHashMap<>();
 
 	/** Bumped whenever an answer lands, so the panel knows it has something new to draw. */
 	@Getter
@@ -75,7 +84,12 @@ public class CommunityClient
 		{
 			fetch(key, query);
 		}
-		return cached == null ? null : cached.aggregate;
+		if (cached == null)
+		{
+			return null;
+		}
+		cached.aggregate.setIncludeKillingBlows(config.includeKillingBlows());
+		return cached.aggregate;
 	}
 
 	/** Whether a fetch for this lookup is running, so the panel can say "loading" rather than nothing. */
@@ -86,6 +100,11 @@ public class CommunityClient
 
 	private void fetch(String key, CommunityQuery query)
 	{
+		final Long blockedUntil = retryAfter.get(key);
+		if (blockedUntil != null && System.currentTimeMillis() < blockedUntil)
+		{
+			return;
+		}
 		if (!inFlight.add(key))
 		{
 			return;
@@ -100,24 +119,30 @@ public class CommunityClient
 				if (!response.isOk())
 				{
 					log.debug("Community query {} returned {}", key, response.getCode());
+					retryAfter.put(key, System.currentTimeMillis() + RETRY_MS);
 					return;
 				}
 
 				final CommunityAggregate parsed = gson.fromJson(response.getBody(), CommunityAggregate.class);
 				if (parsed == null)
 				{
+					retryAfter.put(key, System.currentTimeMillis() + RETRY_MS);
 					return;
 				}
+				retryAfter.remove(key);
 				if (answers.size() >= MAX_ENTRIES)
 				{
 					answers.clear();
+					retryAfter.clear();
 				}
 				answers.put(key, new Entry(parsed, System.currentTimeMillis()));
 				revision++;
 			}
 			catch (IOException | RuntimeException e)
 			{
-				// A community comparison is a nicety. Losing one is not worth telling anyone about.
+				// A community comparison is a nicety. Losing one is not worth telling anyone about,
+				// but it must not turn into a request every two seconds.
+				retryAfter.put(key, System.currentTimeMillis() + RETRY_MS);
 				log.debug("Community query failed", e);
 			}
 			finally
@@ -131,6 +156,7 @@ public class CommunityClient
 	{
 		answers.clear();
 		inFlight.clear();
+		retryAfter.clear();
 		revision++;
 	}
 

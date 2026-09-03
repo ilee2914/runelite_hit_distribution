@@ -481,7 +481,7 @@ public class HitDistributionPanel extends PluginPanel
 		histogram.setData(aggregate.getCounts(),
 			aggregate.isKillingBlowsIncluded() ? aggregate.getKillCounts() : new int[0],
 			aggregate.getSplashes(), aggregate.getHighestHit(),
-			compare ? others.getCounts() : null,
+			compare ? others.getChartedCounts() : null,
 			compare ? others.getSplashes() : 0);
 		fillLegend(query, others);
 		fillHistory(filter, scope);

@@ -1,5 +1,6 @@
 package com.github.ilee2.hitdistribution.sync;
 
+import java.util.Arrays;
 import javax.annotation.Nullable;
 import lombok.Getter;
 
@@ -50,6 +51,7 @@ public class CommunityAggregate
 	private int splashes;
 	private int maxHits;
 	private int killingBlows;
+	private int killingBlowMaxHits;
 	private int wastedTicks;
 	private int activeTicks;
 
@@ -58,9 +60,61 @@ public class CommunityAggregate
 
 	private long rebuiltAt;
 
+	/**
+	 * Whether the killing blows belong in the distribution. Not from the server: it is the panel's
+	 * own toggle, and both halves of the comparison have to answer it the same way or the averages
+	 * mean different things. The server always sends the two histograms apart.
+	 */
+	private transient boolean includeKillingBlows = true;
+
+	public void setIncludeKillingBlows(boolean include)
+	{
+		includeKillingBlows = include;
+	}
+
+	/** Hitsplats by damage with the killing blows left out; what the server stores. */
 	public int[] getCounts()
 	{
 		return counts == null ? NO_COUNTS : counts;
+	}
+
+	/**
+	 * The histogram as charted, which is what every shape statistic below is built from: the
+	 * hitsplats, with the killing blows folded back in when they are being counted. A killing blow
+	 * is capped by the monster's remaining hitpoints, so leaving it out is what shows the weapon's
+	 * real roll.
+	 */
+	public int[] getChartedCounts()
+	{
+		final int[] hits = getCounts();
+		if (!includeKillingBlows)
+		{
+			return hits;
+		}
+
+		final int[] kills = getKillCounts();
+		if (kills.length == 0)
+		{
+			return hits;
+		}
+
+		final int[] out = Arrays.copyOf(hits, Math.max(hits.length, kills.length));
+		for (int d = 0; d < kills.length; d++)
+		{
+			out[d] += kills[d];
+		}
+		return out;
+	}
+
+	public int getChartedHitsplats()
+	{
+		return includeKillingBlows ? hitsplats : hitsplats - killingBlows;
+	}
+
+	/** Max hits among the charted hitsplats, to match how the local side counts them. */
+	public int getChartedMaxHits()
+	{
+		return includeKillingBlows ? maxHits : maxHits - killingBlowMaxHits;
 	}
 
 	public int[] getKillCounts()
@@ -74,9 +128,19 @@ public class CommunityAggregate
 		return ok && !empty && !tooBroad && hitsplats > 0;
 	}
 
+	/**
+	 * Every point of damage dealt, killing blows included whether or not they are charted. Damage
+	 * done is damage done; only the shape statistics follow the toggle.
+	 */
 	public int getTotalDamage()
 	{
 		return damageIn(getCounts()) + damageIn(getKillCounts());
+	}
+
+	/** The damage in the charted histogram, which is what the averages divide. */
+	public int getChartedDamage()
+	{
+		return damageIn(getChartedCounts());
 	}
 
 	public int getZeroHits()
@@ -98,7 +162,8 @@ public class CommunityAggregate
 
 	public double getAveragePerHitsplat()
 	{
-		return hitsplats == 0 ? 0 : (double) getTotalDamage() / hitsplats;
+		final int charted = getChartedHitsplats();
+		return charted == 0 ? 0 : (double) getChartedDamage() / charted;
 	}
 
 	public double getAveragePerLandedHit()
@@ -121,7 +186,8 @@ public class CommunityAggregate
 
 	public double getMaxHitRate()
 	{
-		return hitsplats == 0 ? 0 : (double) maxHits / hitsplats;
+		final int charted = getChartedHitsplats();
+		return charted == 0 ? 0 : (double) getChartedMaxHits() / charted;
 	}
 
 	public double getDps()
@@ -136,7 +202,7 @@ public class CommunityAggregate
 
 	public int getHighestHit()
 	{
-		final int[] c = getCounts();
+		final int[] c = getChartedCounts();
 		for (int d = c.length - 1; d > 0; d--)
 		{
 			if (c[d] > 0)

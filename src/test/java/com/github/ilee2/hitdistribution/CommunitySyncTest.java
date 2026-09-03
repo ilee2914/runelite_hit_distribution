@@ -23,6 +23,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -282,6 +283,36 @@ public class CommunitySyncTest
 		assertEquals(0.5, real.getAccuracy(), 1e-9);
 		assertNotNull(real.getEpoch());
 		assertEquals("2026-10-01", real.getEpoch().getStartLabel());
+	}
+
+	@Test
+	public void theCommunitySeriesFollowsTheKillingBlowToggle()
+	{
+		// Four 2s and six 3s landed, plus one killing blow of 2 and one of 5. The server always
+		// sends the two histograms apart; the toggle decides whether they are drawn as one.
+		final CommunityAggregate a = new Gson().fromJson(
+			"{\"ok\":true,\"counts\":[10,0,4,6],\"killCounts\":[0,0,1,0,0,1],"
+				+ "\"hitsplats\":22,\"maxHits\":3,\"killingBlows\":2,\"killingBlowMaxHits\":1,"
+				+ "\"splashes\":0,\"attacks\":22,\"activeTicks\":100}",
+			CommunityAggregate.class);
+
+		a.setIncludeKillingBlows(true);
+		assertArrayEquals(new int[]{10, 0, 5, 6, 0, 1}, a.getChartedCounts());
+		assertEquals(22, a.getChartedHitsplats());
+		assertEquals(3, a.getChartedMaxHits());
+		assertEquals(5, a.getHighestHit());
+		// 5*2 + 6*3 + 1*5 = 33 over 22 hitsplats.
+		assertEquals(33.0 / 22, a.getAveragePerHitsplat(), 1e-9);
+
+		a.setIncludeKillingBlows(false);
+		assertArrayEquals(new int[]{10, 0, 4, 6}, a.getChartedCounts());
+		assertEquals(20, a.getChartedHitsplats());
+		assertEquals(2, a.getChartedMaxHits());
+		assertEquals(3, a.getHighestHit());
+		assertEquals(26.0 / 20, a.getAveragePerHitsplat(), 1e-9);
+
+		// Damage dealt is damage dealt, whichever way the toggle is set.
+		assertEquals(33, a.getTotalDamage());
 	}
 
 	// ------------------------------------------------------------------ helpers
