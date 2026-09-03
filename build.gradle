@@ -1,0 +1,71 @@
+plugins {
+	id 'java'
+}
+
+repositories {
+	mavenLocal()
+	maven {
+		url = 'https://repo.runelite.net'
+		content {
+			includeGroupByRegex("net\\.runelite.*")
+		}
+	}
+	mavenCentral()
+}
+
+version = '1.0.0'
+group = 'com.github.ilee2.hitdistribution'
+
+def runeLiteVersion = 'latest.release'
+
+dependencies {
+	compileOnly group: 'net.runelite', name:'client', version: runeLiteVersion
+	compileOnly 'org.projectlombok:lombok:1.18.30'
+	annotationProcessor 'org.projectlombok:lombok:1.18.30'
+
+	testImplementation 'junit:junit:4.12'
+	testImplementation group: 'net.runelite', name:'client', version: runeLiteVersion
+	testImplementation group: 'net.runelite', name:'jshell', version: runeLiteVersion
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.encoding = 'UTF-8'
+	options.release.set(11)
+	options.compilerArgs.add('-Xlint:deprecation')
+}
+
+tasks.register('run', JavaExec) {
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.github.ilee2.hitdistribution.HitDistributionPluginTest'
+	jvmArgs "-ea"
+}
+
+// Copies the plugin jar into RuneLite's sideload directory so the normally installed
+// client (Jagex Launcher, Steam shortcut, desktop icon) picks it up. The client only
+// scans this directory when started with --developer-mode, and it loads *every* jar it
+// finds there, so every sideloaded plugin coexists without interfering.
+def sideloadDir = new File(System.getProperty('user.home'), '.runelite/sideloaded-plugins')
+
+tasks.register('installSideload', Copy) {
+	description = "Installs the plugin jar into ${sideloadDir}"
+	group = 'installation'
+
+	from tasks.named('jar')
+	into sideloadDir
+	rename { "${rootProject.name}.jar" }
+
+	doFirst {
+		sideloadDir.mkdirs()
+	}
+	doLast {
+		logger.lifecycle("Installed ${rootProject.name}.jar to ${sideloadDir}")
+		logger.lifecycle("Restart RuneLite to load it (client must run with --developer-mode).")
+	}
+}
+
+tasks.register('uninstallSideload', Delete) {
+	description = "Removes the plugin jar from ${sideloadDir}"
+	group = 'installation'
+
+	delete new File(sideloadDir, "${rootProject.name}.jar")
+}
