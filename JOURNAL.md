@@ -715,3 +715,49 @@ pinned-to-nothing slot draws "none" in the filter colour. `NO_ITEM` became publi
 package names the same constant the store does rather than spelling -1 twice.
 
 Tests are at 69: `anEmptySlotIsAChoiceOfItsOwn` covers the store end of it, which had no test.
+
+### The protection switch moves under the chart
+
+"Count attacks into protection" sat up with the monster/style filters, one row above the gear
+toggle, while "Count killing blows" sat under the chart. They are the same kind of control -- a
+saved display setting that decides which attacks are in the sample, not part of the filter that
+"Reset filter" clears -- so having them in two different places made the filter block look like
+it owned one of them. The protection row now sits directly under the killing blow row, and the
+filter block is monster, style, gear and nothing else. Layout only; both switches write the same
+config items as before, and the config panel already listed them in this order.
+
+## 2026-09-04 — The community distribution is a line, not a second bar
+
+The paired-bar layout answered "what does everyone else's distribution look like" but not the
+question actually being asked, which is "how does mine compare to theirs". Reading it meant
+pairing up two bars per row and judging two lengths against each other, thirty rows in a row.
+
+`HistogramPanel` now draws the community series as a line running down the chart, through the
+point on each row where everyone else's share of that damage falls. Your bar crossing the line
+means you land that damage more often than the rest of the community does; stopping short means
+less often. The comparison is one glance per row instead of two lengths.
+
+Details:
+
+- Both series are still drawn as **shares of attempts**, scaled to the tallest share in either
+  one. Nothing about that changed; it is still the only comparable scale between one player and
+  thousands.
+- The line covers the damage rows only. Misses and splashes are on a different scale — they are
+  the rows that run off the end of the chart with a torn edge — so their community share is drawn
+  as a tick within the row instead. A tick that lands short of the tear is worth seeing: it means
+  everyone else misses less often than you do.
+- The line is drawn over the bars but under the count labels, which are now written in a second
+  pass for that reason. A line through a number is the one thing that made the first draft harder
+  to read, not easier.
+- A dark halo stroke under the line keeps it legible where it crosses an orange bar. The
+  community colour was lightened (96,156,196 to 120,180,225) since a thin line needs more
+  contrast than a solid bar did.
+- Rows are one bar tall again in both modes (13px rows, 9px bars), so turning the community chart
+  on no longer makes the histogram grow by a third. `PAIR_ROW_HEIGHT`, `PAIR_BAR_HEIGHT` and
+  `PAIR_BAR_GAP` are gone, along with `rowHeight()`.
+- The legend swatch for "Everyone" is a bar glyph (`&#9644;`) rather than the square, matching how
+  the chart draws it. The tooltip is unchanged: hovering a row still gives your count and share
+  and theirs.
+
+`README.md`, `CLAUDE.md` and the `showCommunity` config description said "beside your own"; they
+now say what the chart does.

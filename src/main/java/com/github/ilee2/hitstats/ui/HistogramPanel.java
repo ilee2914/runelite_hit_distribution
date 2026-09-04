@@ -1,12 +1,15 @@
 package com.github.ilee2.hitstats.ui;
 
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.Stroke;
 import java.awt.event.MouseEvent;
+import java.awt.geom.Path2D;
 import java.util.ArrayList;
 import java.util.List;
 import javax.annotation.Nullable;
@@ -27,18 +30,18 @@ import net.runelite.client.ui.FontManager;
  * run off the end of the chart with a torn edge and their true count beside them. They sit above
  * a divider, apart from the damage they are not part of.
  *
- * <p>When a community distribution is supplied, each row grows a second bar under the first and
- * both series switch to <em>share of attempts</em> rather than raw counts. Everyone else together
- * has thousands of times more hits than one player, so raw counts would draw one visible series
- * and one flat line; shares are the only way the two shapes can be compared.
+ * <p>When a community distribution is supplied it is drawn as a line across the bars, at the point
+ * on each row where everyone else's share of that damage falls, and both series switch to
+ * <em>share of attempts</em> rather than raw counts. Everyone else together has thousands of times
+ * more hits than one player, so raw counts would draw one visible series and one flat line; shares
+ * are the only way the two shapes can be compared. A line rather than a second bar because the
+ * question is where your bar sits against theirs, and a bar that crosses the line answers it
+ * without the eye having to pair up two rows.
  */
 public class HistogramPanel extends JPanel
 {
-	private static final int SOLO_ROW_HEIGHT = 13;
-	private static final int SOLO_BAR_HEIGHT = 9;
-	private static final int PAIR_ROW_HEIGHT = 15;
-	private static final int PAIR_BAR_HEIGHT = 5;
-	private static final int PAIR_BAR_GAP = 1;
+	private static final int ROW_HEIGHT = 13;
+	private static final int BAR_HEIGHT = 9;
 
 	private static final int GUTTER = 22;
 	private static final int LEFT_PAD = 2;
@@ -57,11 +60,19 @@ public class HistogramPanel extends JPanel
 	private static final Color DIVIDER_COLOR = new Color(70, 70, 70);
 	private static final Color HOVER_COLOR = new Color(255, 255, 255, 40);
 
+	/** Drawn under the community line so it stays legible where it crosses a bar. */
+	private static final Color LINE_HALO_COLOR = new Color(20, 20, 20, 190);
+
+	private static final Stroke LINE_STROKE =
+		new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
+	private static final Stroke LINE_HALO_STROKE =
+		new BasicStroke(3.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
+
 	/** Killing blows, both in their bar segments here and wherever the panel refers to them. */
 	public static final Color KILL_COLOR = new Color(196, 96, 70);
 
 	/** Everyone else's distribution. Cool against the warm bars so the two never read as one. */
-	public static final Color COMMUNITY_COLOR = new Color(96, 156, 196);
+	public static final Color COMMUNITY_COLOR = new Color(120, 180, 225);
 
 	/** One bar: a hitsplat amount, or the miss or splash tally. */
 	private static class Row
@@ -223,18 +234,13 @@ public class HistogramPanel extends JPanel
 		repaint();
 	}
 
-	private int rowHeight()
-	{
-		return paired ? PAIR_ROW_HEIGHT : SOLO_ROW_HEIGHT;
-	}
-
 	private int height()
 	{
 		if (rows == null || rows.isEmpty())
 		{
 			return 28;
 		}
-		return TOP_PAD + rows.size() * rowHeight() + BOTTOM_PAD
+		return TOP_PAD + rows.size() * ROW_HEIGHT + BOTTOM_PAD
 			+ (firstDamageRow > 0 ? DIVIDER_HEIGHT : 0);
 	}
 
@@ -305,8 +311,10 @@ public class HistogramPanel extends JPanel
 		// Alone, bars are counts against the tallest count. Beside the community they are shares
 		// against the tallest share of either series, which is the only comparable scale.
 		final double scale = paired ? peakShare() : Math.max(1, peak);
-		final int rowHeight = rowHeight();
-		final int barHeight = paired ? PAIR_BAR_HEIGHT : SOLO_BAR_HEIGHT;
+
+		// Where each bar's count label goes. Held back until after the community line, so the line
+		// never runs through a number.
+		final int[] countX = new int[rows.size()];
 
 		for (int i = 0; i < rows.size(); i++)
 		{
@@ -316,18 +324,15 @@ public class HistogramPanel extends JPanel
 			if (i == hoverRow)
 			{
 				g.setColor(HOVER_COLOR);
-				g.fillRect(0, y, getWidth(), rowHeight);
+				g.fillRect(0, y, getWidth(), ROW_HEIGHT);
 			}
 
 			// Amount, right-aligned into its own column so the bars all start together.
 			g.setColor(AXIS_COLOR);
 			final int labelWidth = fm.stringWidth(row.label);
-			g.drawString(row.label, barLeft - COUNT_GAP - labelWidth,
-				y + fm.getAscent() + (paired ? -1 : 0));
+			g.drawString(row.label, barLeft - COUNT_GAP - labelWidth, y + fm.getAscent());
 
-			final int barY = paired
-				? y + 1
-				: y + (rowHeight - barHeight) / 2;
+			final int barY = barTop(i);
 
 			if (row.count > 0)
 			{
@@ -338,7 +343,7 @@ public class HistogramPanel extends JPanel
 					: Math.max(MIN_BAR, (int) Math.round(barMax * value / scale));
 
 				g.setColor(row.color);
-				g.fillRect(barLeft, barY, length, barHeight);
+				g.fillRect(barLeft, barY, length, BAR_HEIGHT);
 
 				if (row.killCount > 0 && !runsOff)
 				{
@@ -348,34 +353,15 @@ public class HistogramPanel extends JPanel
 					final int segment = Math.min(length,
 						Math.max(1, (int) Math.round(barMax * killValue / scale)));
 					g.setColor(KILL_COLOR);
-					g.fillRect(barLeft + length - segment, barY, segment, barHeight);
+					g.fillRect(barLeft + length - segment, barY, segment, BAR_HEIGHT);
 				}
 
 				if (runsOff)
 				{
-					tear(g, barLeft + length, barY, barHeight);
+					tear(g, barLeft + length, barY, BAR_HEIGHT);
 				}
 
-				g.setColor(row.color);
-				g.drawString(Integer.toString(row.count), barLeft + length + COUNT_GAP,
-					y + fm.getAscent() + (paired ? -1 : 0));
-			}
-
-			if (paired && row.otherCount > 0)
-			{
-				final double value = share(row.otherCount, otherTotal);
-				final boolean runsOff = row.offScale && value > scale;
-				final int length = runsOff
-					? barMax
-					: Math.max(MIN_BAR, (int) Math.round(barMax * value / scale));
-				final int otherY = barY + barHeight + PAIR_BAR_GAP;
-
-				g.setColor(COMMUNITY_COLOR);
-				g.fillRect(barLeft, otherY, length, barHeight);
-				if (runsOff)
-				{
-					tear(g, barLeft + length, otherY, barHeight);
-				}
+				countX[i] = barLeft + length + COUNT_GAP;
 			}
 		}
 
@@ -386,6 +372,94 @@ public class HistogramPanel extends JPanel
 			g.setColor(DIVIDER_COLOR);
 			g.drawLine(LEFT_PAD, y, getWidth() - RIGHT_PAD, y);
 		}
+
+		if (paired)
+		{
+			// Over the bars it is there to be compared against, but under the counts.
+			drawCommunityLine(g, barLeft, barMax, scale);
+		}
+
+		for (int i = 0; i < rows.size(); i++)
+		{
+			final Row row = rows.get(i);
+			if (row.count > 0)
+			{
+				g.setColor(row.color);
+				g.drawString(Integer.toString(row.count), countX[i], rowTop(i) + fm.getAscent());
+			}
+		}
+	}
+
+	/**
+	 * Everyone else's distribution, as a line running down the chart through the point on each row
+	 * where their share of that damage falls. A bar that overshoots the line is a damage value you
+	 * land more often than the rest of the community does, and one that stops short is the reverse.
+	 *
+	 * <p>The line covers the damage rows only. Misses and splashes are on a different scale and are
+	 * marked with a tick instead, so their share cannot drag the curve off the chart.
+	 */
+	private void drawCommunityLine(Graphics2D g, int barLeft, int barMax, double scale)
+	{
+		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+		for (int i = 0; i < firstDamageRow; i++)
+		{
+			final int x = communityX(rows.get(i), barLeft, barMax, scale);
+			final int barY = barTop(i);
+
+			g.setColor(LINE_HALO_COLOR);
+			g.setStroke(LINE_HALO_STROKE);
+			g.drawLine(x, barY, x, barY + BAR_HEIGHT - 1);
+
+			g.setColor(COMMUNITY_COLOR);
+			g.setStroke(LINE_STROKE);
+			g.drawLine(x, barY, x, barY + BAR_HEIGHT - 1);
+		}
+
+		if (firstDamageRow >= rows.size())
+		{
+			return;
+		}
+
+		final Path2D.Double path = new Path2D.Double();
+		for (int i = firstDamageRow; i < rows.size(); i++)
+		{
+			final int x = communityX(rows.get(i), barLeft, barMax, scale);
+			final int y = barTop(i) + BAR_HEIGHT / 2;
+
+			if (i == firstDamageRow)
+			{
+				path.moveTo(x, y);
+			}
+			else
+			{
+				path.lineTo(x, y);
+			}
+		}
+
+		g.setColor(LINE_HALO_COLOR);
+		g.setStroke(LINE_HALO_STROKE);
+		g.draw(path);
+
+		g.setColor(COMMUNITY_COLOR);
+		g.setStroke(LINE_STROKE);
+		g.draw(path);
+
+		// A dot per row, so a single row can still be read off the line where it runs near-vertical.
+		for (int i = firstDamageRow; i < rows.size(); i++)
+		{
+			final int x = communityX(rows.get(i), barLeft, barMax, scale);
+			final int y = barTop(i) + BAR_HEIGHT / 2;
+			g.fillOval(x - 2, y - 2, 4, 4);
+		}
+	}
+
+	/** Where a row's community share lands along the bar, clamped to the end of the chart. */
+	private int communityX(Row row, int barLeft, int barMax, double scale)
+	{
+		final double value = share(Math.max(0, row.otherCount), otherTotal);
+		final int length = Math.min(barMax, (int) Math.round(barMax * value / scale));
+		return barLeft + Math.max(0, length);
 	}
 
 	/**
@@ -422,17 +496,22 @@ public class HistogramPanel extends JPanel
 
 	private int rowTop(int index)
 	{
-		return TOP_PAD + index * rowHeight()
+		return TOP_PAD + index * ROW_HEIGHT
 			+ (index >= firstDamageRow && firstDamageRow > 0 ? DIVIDER_HEIGHT : 0);
+	}
+
+	/** Top of the bar in a row, which is also what the community line is centred on. */
+	private int barTop(int index)
+	{
+		return rowTop(index) + (ROW_HEIGHT - BAR_HEIGHT) / 2;
 	}
 
 	private int rowAt(int y)
 	{
-		final int rowHeight = rowHeight();
 		for (int i = 0; i < rows.size(); i++)
 		{
 			final int top = rowTop(i);
-			if (y >= top && y < top + rowHeight)
+			if (y >= top && y < top + ROW_HEIGHT)
 			{
 				return i;
 			}

@@ -221,8 +221,8 @@ public interface HitStatsConfig extends Config
 	@ConfigItem(
 		keyName = "showCommunity",
 		name = "Show the community chart",
-		description = "Draw everyone else's distribution beside your own, and compare the summary"
-			+ " statistics, whenever the filter names a monster and a weapon."
+		description = "Draw everyone else's distribution as a line across your own bars, and compare"
+			+ " the summary statistics, whenever the filter names a monster and a weapon."
 			+ " This asks the community server for an average whenever your filter changes, so it"
 			+ " is off until you turn it on. The request carries only the filter itself: the"
 			+ " monster, the gear, the attack and your levels. You do not have to share anything"

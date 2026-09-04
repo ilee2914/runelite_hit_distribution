@@ -149,8 +149,6 @@ public class HitStatsPanel extends PluginPanel
 		content.add(Box.createVerticalStrut(3));
 		content.add(filterRow("Style", attackSelect));
 		content.add(Box.createVerticalStrut(5));
-		content.add(protectionRow());
-		content.add(Box.createVerticalStrut(4));
 		content.add(gearToggleRow());
 		content.add(gearFilterWrapper);
 		content.add(Box.createVerticalStrut(8));
@@ -180,6 +178,7 @@ public class HitStatsPanel extends PluginPanel
 
 		content.add(Box.createVerticalStrut(4));
 		content.add(killingBlowRow());
+		content.add(protectionRow());
 		content.add(Box.createVerticalStrut(8));
 
 		contextsPanel.setLayout(new BoxLayout(contextsPanel, BoxLayout.Y_AXIS));
@@ -351,10 +350,10 @@ public class HitStatsPanel extends PluginPanel
 	}
 
 	/**
-	 * The protection switch sits with the filters, because it decides which attacks are in the
-	 * sample at all. A target praying against the style being used takes far less damage from it,
-	 * so folding both cases into one average understates what the gear actually does; the switch
-	 * writes the same setting the config panel shows.
+	 * The protection switch sits under the chart next to the killing blow one, because both decide
+	 * which attacks are in the sample. A target praying against the style being used takes far
+	 * less damage from it, so folding both cases into one average understates what the gear
+	 * actually does; the switch writes the same setting the config panel shows.
 	 */
 	private JPanel protectionRow()
 	{
@@ -692,7 +691,7 @@ public class HitStatsPanel extends PluginPanel
 		}
 	}
 
-	/** Says what the second series in the chart is, or why there is not one. */
+	/** Says what the community line in the chart is, or why there is not one. */
 	private void fillLegend(@Nullable CommunityQuery query, @Nullable CommunityAggregate others)
 	{
 		if (query == null || !config.showCommunity())
@@ -723,7 +722,8 @@ public class HitStatsPanel extends PluginPanel
 		final StringBuilder sb = new StringBuilder("<html>");
 		sb.append("<font color='#").append(hex(ColorScheme.BRAND_ORANGE)).append("'>&#9632;</font> You");
 		sb.append("&nbsp;&nbsp;");
-		sb.append("<font color='#").append(hex(HistogramPanel.COMMUNITY_COLOR)).append("'>&#9632;</font> ");
+		// A bar for your own series, a line for theirs, matching how the chart draws them.
+		sb.append("<font color='#").append(hex(HistogramPanel.COMMUNITY_COLOR)).append("'>&#9644;</font> ");
 		sb.append("Everyone");
 		if (others.getOthers() > 0)
 		{

@@ -155,9 +155,9 @@ are never dropped, so shrinking the log loses recent detail but no history.
 Off by default. Nothing leaves your client until you turn on **Share my hits** in the Community
 section of the settings.
 
-With it on, the panel draws everyone else's distribution beside your own whenever the filter names
-a monster and a weapon, and compares the statistics that describe the shape of a distribution
-rather than how long you have played: average per hitsplat, average per landed hit, accuracy,
+With it on, the panel draws everyone else's distribution as a line across your own bars whenever
+the filter names a monster and a weapon, and compares the statistics that describe the shape of a
+distribution rather than how long you have played: average per hitsplat, average per landed hit, accuracy,
 splash rate, max-hit rate, highest hit, DPS and wasted ticks per attack.
 
 What is sent, for each combination of worn gear, Attack/Strength/Ranged/Magic levels, damage
@@ -202,7 +202,7 @@ rebuilt without it.
 | Debug logging | off | Log each attack, hit and splash decision |
 | Share my hits | **off** | Send your statistics and see everyone else's; see above |
 | Share every | 30 min | How often statistics are sent while you are logged in |
-| Show the community chart | on | Draw everyone else's distribution beside yours |
+| Show the community chart | on | Draw everyone else's distribution as a line across your bars |
 | Match levels | Same level bracket | Which other players to compare against: any level, the same five-level bracket of your style's main skill, or exactly your levels |
 
 ## Limitations

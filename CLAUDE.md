@@ -7,8 +7,8 @@ the levels that affect damage, the prayers that affect damage, style, spell, spe
 target NPC and the overhead prayer that NPC was using), and show the damage
 distribution, accuracy, splash rate, DPS and wasted ticks in a side panel filterable by monster,
 style, target prayer and any worn equipment slot. An opt-in upload shares those statistics with a
-community server so the panel can draw everyone else's distribution beside the player's own; it is
-off by default and sends nothing until it is turned on.
+community server so the panel can draw everyone else's distribution as a line across the player's
+own bars; it is off by default and sends nothing until it is turned on.
 
 This plugin only observes. It reads hitsplats, animations, graphics, varbits and containers, and
 writes a local JSON file. It never sends input, queues a menu action, or changes game state.
