@@ -26,6 +26,7 @@ import org.junit.rules.TemporaryFolder;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -78,14 +79,30 @@ public class CommunitySyncTest
 	}
 
 	@Test
-	public void sendsNothingWithoutAServerUrl() throws Exception
+	public void anEmptyOverrideFallsBackToTheBuiltInServer() throws Exception
 	{
+		// The hidden serverUrl setting is a development override. Blank means "use the built-in
+		// one", which has held the deployed Worker since 2026-09-03; it was empty before that,
+		// and an empty base URL still disables every request, which is what made the feature
+		// inert while there was nothing to talk to.
 		config.serverUrl = "";
 		recordHit(10);
 
-		await(sync.upload(CommunitySync.Reason.TIMER));
+		assertTrue("the built-in server URL should be set now the Worker is deployed",
+			sync.baseUrl().startsWith("https://"));
 
-		assertEquals(0, transport.posts);
+		await(sync.upload(CommunitySync.Reason.TIMER));
+		assertEquals(1, transport.posts);
+	}
+
+	@Test
+	public void theOverrideWinsAndItsTrailingSlashIsTrimmed()
+	{
+		config.serverUrl = "http://localhost:8787/";
+		assertEquals("http://localhost:8787", sync.baseUrl());
+
+		config.serverUrl = "   ";
+		assertNotEquals("blank is not an override", "", sync.baseUrl());
 	}
 
 	@Test

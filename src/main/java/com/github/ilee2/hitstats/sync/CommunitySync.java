@@ -30,11 +30,11 @@ import net.runelite.client.config.ConfigManager;
 public class CommunitySync
 {
 	/**
-	 * Where the Worker lives. **Empty until it is deployed**: the owner picks the workers.dev
-	 * subdomain, and until this holds a real URL the plugin will not talk to anything, whatever
-	 * the config says. See section 9 of the server plan.
+	 * Where the Worker lives. An empty value disables every request whatever the config says,
+	 * which is what it held until the Worker was deployed on 2026-09-03. The hidden
+	 * {@code serverUrl} setting overrides it for development against a local {@code wrangler dev}.
 	 */
-	static final String DEFAULT_BASE_URL = "";
+	static final String DEFAULT_BASE_URL = "https://osrs-hit-stats-worker.mayorhem.workers.dev";
 
 	static final String SYNC_PATH = "/v1/sync";
 
