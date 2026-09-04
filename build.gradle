@@ -14,7 +14,7 @@ repositories {
 }
 
 version = '1.1.0'
-group = 'com.github.ilee2.hitdistribution'
+group = 'com.github.ilee2.hitstats'
 
 def runeLiteVersion = 'latest.release'
 
@@ -47,7 +47,7 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.register('run', JavaExec) {
 	classpath = sourceSets.test.runtimeClasspath
-	mainClass = 'com.github.ilee2.hitdistribution.HitDistributionPluginTest'
+	mainClass = 'com.github.ilee2.hitstats.HitStatsPluginTest'
 	jvmArgs "-ea"
 }
 

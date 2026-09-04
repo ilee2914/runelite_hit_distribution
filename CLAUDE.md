@@ -1,4 +1,4 @@
-# RuneLite Hit Distribution Plugin
+# RuneLite Hit Stats Plugin
 
 ## Project Goal
 
@@ -13,7 +13,7 @@ off by default and sends nothing until it is turned on.
 This plugin only observes. It reads hitsplats, animations, graphics, varbits and containers, and
 writes a local JSON file. It never sends input, queues a menu action, or changes game state.
 
-The server is a separate, private repository (`hit_distribution_server`, a sibling of this one).
+The server is a separate, private repository (`hit_stats_server`, a sibling of this one).
 Its design, the wire format and the operational rules live in `../server_plan.md`, which is the
 specification for anything under the `sync` package. Read it before changing the payload.
 
@@ -23,11 +23,11 @@ Intended for the Plugin Hub, so every identifier is chosen to be unique there:
 
 | Thing | Value |
 | --- | --- |
-| Hub name / jar / `rootProject.name` | `hit-distribution` |
-| Display name | Hit Distribution |
-| Config group | `hitdistribution` |
-| Package | `com.github.ilee2.hitdistribution` |
-| Data directory | `~/.runelite/hit-distribution/` |
+| Hub name / jar / `rootProject.name` | `hit-stats` |
+| Display name | Hit Stats |
+| Config group | `hitstats` |
+| Package | `com.github.ilee2.hitstats` |
+| Data directory | `~/.runelite/hit-stats/` |
 
 A **different** Hub plugin already owns the name `damage-history` (QuestingPet/DamageHistory,
 class `com.damagehistory.DamageHistoryPlugin`). It tracks per-player damage totals for you and
@@ -38,8 +38,8 @@ stat, DPS or wasted-tick tracking. Do not reuse any of its identifiers.
 
 | Class | Responsibility |
 | --- | --- |
-| `HitDistributionPlugin` | Event wiring, panel and nav button, periodic panel refresh |
-| `HitDistributionConfig` | Config panel |
+| `HitStatsPlugin` | Event wiring, panel and nav button, periodic panel refresh |
+| `HitStatsConfig` | Config panel |
 | `CombatTracker` | Client-facing logic: snapshots contexts on attack animations, feeds hits and splashes through the matcher, tracks fights, writes to the store |
 | `AttackMatcher` | Pure tick arithmetic pairing attack animations with hitsplats and splashes |
 | `PendingAttack` | An animation waiting for its hit, with the context snapshot |
@@ -48,7 +48,7 @@ stat, DPS or wasted-tick tracking. Do not reuse any of its identifiers.
 | `KillRecord` | One fight against one NPC instance |
 | `HitRecord` | One logged hitsplat, pointing back at its context |
 | `HistoryData` | Root of the JSON file: names, contexts, fights |
-| `HitDistributionStore` | Synchronized in-memory data plus load/save; builds `Aggregate` and `FilterOptions` |
+| `HitStatsStore` | Synchronized in-memory data plus load/save; builds `Aggregate` and `FilterOptions` |
 | `Aggregate` | Contexts and fights folded into one histogram and derived statistics |
 | `HistoryFilter` / `FilterOptions` | What the panel is filtering on, and what it can filter on |
 | `AttackStyleResolver` | Weapon category + style varps → combat style, style name, Rapid |
@@ -56,7 +56,7 @@ stat, DPS or wasted-tick tracking. Do not reuse any of its identifiers.
 | `OverheadPrayer` | Overhead icon → the combat styles it protects against |
 | `DamagePrayers` | Which of the player's prayers belong in the context |
 | `OverheadPrayerReader` | NPC overhead sprite arrays → `OverheadPrayer` set |
-| `ui.HitDistributionPanel` | Sidebar: filters, stats grid, histogram, breakdown |
+| `ui.HitStatsPanel` | Sidebar: filters, stats grid, histogram, breakdown |
 | `ui.FilterSelect` | Search box plus suggestion popup, standing in for a dropdown |
 | `ui.HistogramPanel` | Hand-painted bar chart for the whole filtered set |
 | `ui.EquipmentPanel` | Worn gear as item icons in the game's equipment layout |
@@ -142,7 +142,7 @@ Notes:
 
 - `compileJava` is **not** enough — it never produces a jar.
 - Fully exit RuneLite before rebuilding; a running client holds the sideloaded jar open.
-- The history file is `~/.runelite/hit-distribution/<player>.json`. Delete it, or use the panel's
+- The history file is `~/.runelite/hit-stats/<player>.json`. Delete it, or use the panel's
   Clear button, to start over.
 
 ## Rules
@@ -168,7 +168,7 @@ Notes:
    base URL disables every request whatever the config says.
 6. **Keep the matcher pure**: `AttackMatcher` must stay free of client types so it remains unit
    testable. Client access belongs in `CombatTracker`.
-7. **Package**: `com.github.ilee2.hitdistribution` — all classes live under this package.
+7. **Package**: `com.github.ilee2.hitstats` — all classes live under this package.
 8. **Java Version**: Target Java 11 (RuneLite requirement).
 9. **Dependencies**: Only libraries available through RuneLite's client dependency. No SQLite,
    no charting library; the Hub restricts dependencies and native code.
@@ -186,7 +186,7 @@ Notes:
     fights and logged hits will point at keys nothing answers to.
     A key change is also a **server** event: every row a player has uploaded is keyed the old way,
     so bump the server's `min_key_version` on the same day (see `../server_plan.md`, section 8.5).
-    `HitDistributionStore.load` reads the file before it sets the player name, and `read` catches
+    `HitStatsStore.load` reads the file before it sets the player name, and `read` catches
     every RuntimeException, so a failed read can never leave an empty store that the autosave then
     writes over the file.
 11. **Identifiers are frozen once published**: the config group and data directory cannot change

@@ -1,4 +1,4 @@
-# Hit Distribution
+# Hit Stats
 
 A RuneLite plugin that records every hit you deal and shows the damage distribution behind it.
 Filter by monster, weapon and attack type, and see average damage, accuracy, splash rate, max-hit
@@ -135,7 +135,7 @@ waste.
 
 ## Data
 
-History lives in `~/.runelite/hit-distribution/<character name>.json` and is written every couple
+History lives in `~/.runelite/hit-stats/<character name>.json` and is written every couple
 of minutes and on logout. The `Clear` button offers two things, each asking first:
 
 - **This session** starts the session counters over and leaves the file alone.

@@ -1,5 +1,29 @@
 # Journal
 
+## 2026-09-03 -- Renamed to Hit Stats
+
+"Hit Distribution" was too long. Checked against all 2,540 Plugin Hub names on the day:
+`hit-stats` is free and nothing on the Hub is close to it. The plugin is not published yet, so
+this was the last cheap moment; after a Hub release the config group and data directory cannot
+move without losing everyone's settings and history.
+
+Moved together, because they are one identity: Hub name and jar (`hit-stats`), display name
+(Hit Stats), config group (`hitstats`), package (`com.github.ilee2.hitstats`), data directory
+(`~/.runelite/hit-stats/`), the four classes that carried the old name, the icon resource, the
+repository, and the Cloudflare Worker (`osrs-hit-stats-worker`) with its D1 databases.
+
+Two consequences worth knowing:
+
+- **Existing history was copied**, not moved: `~/.runelite/hit-distribution/` is left alone and
+  the same files now sit under `~/.runelite/hit-stats/`. Delete the old directory once the
+  rename is confirmed working in a live client.
+- **Settings reset to their defaults.** RuneLite keys config on the group name, so the old
+  `hitdistribution` keys are orphaned. Nothing was worth a migration for a plugin that has never
+  been released.
+
+The old sideloaded `hit-distribution.jar` was deleted. Leaving it would have loaded both
+plugins, and both would have recorded every hit.
+
 ## 2026-09-03 -- Format 8 key merge, and the opt-in community upload
 
 ### The bug that had to be fixed first
@@ -99,7 +123,7 @@ the URL is filled in. The plugin has not been verified in a live client since th
   level map learned on first sight from the transformed composition. A config toggle splits by id
   for bosses whose phases share a name.
 - **No SQLite, no chart library.** The Hub restricts dependencies and bans native code. Gson JSON
-  under `~/.runelite/hit-distribution/`, and a hand-painted Swing histogram.
+  under `~/.runelite/hit-stats/`, and a hand-painted Swing histogram.
 
 ### Implementation notes
 
@@ -125,7 +149,7 @@ the URL is filled in. The plugin has not been verified in a live client since th
   seconds rather than subscribing to each write.
 - Panel uses `PluginPanel(true)` so RuneLite wraps it in a scroll pane; the breakdown list can be
   longer than the sidebar.
-- Build: 25 unit tests across `AttackMatcherTest`, `ContextStatsTest`, `HitDistributionStoreTest`
+- Build: 25 unit tests across `AttackMatcherTest`, `ContextStatsTest`, `HitStatsStoreTest`
   (aggregation maths, filters, options, Gson round-trip). First scaffold pass through a shell
   heredoc mangled the `\\.` in build.gradle; the file is now copied from the prayer alert build
   with names substituted.
@@ -137,14 +161,14 @@ Originally built as "Damage History", which collides with an existing Hub plugin
 shows was installed and removed here on 2026-09-02. A shared config group would have mixed the two
 plugins' settings, and the Hub requires a unique plugin name.
 
-Renamed everything to **Hit Distribution** — the distribution chart is what distinguishes this
-plugin, and `hit-distribution` was free among the 2,513 names in the plugin-hub repository. The
-project folder is `runelite_hit_distribution`, the jar and Hub name are `hit-distribution`, the
-package is `com.github.ilee2.hitdistribution`, the config group is `hitdistribution`, and data
-lives in `~/.runelite/hit-distribution/`. The config group and data directory are effectively
+Renamed everything to **Hit Stats** — the distribution chart is what distinguishes this
+plugin, and `hit-stats` was free among the 2,513 names in the plugin-hub repository. The
+project folder is `runelite_hit_stats`, the jar and Hub name are `hit-stats`, the
+package is `com.github.ilee2.hitstats`, the config group is `hitstats`, and data
+lives in `~/.runelite/hit-stats/`. The config group and data directory are effectively
 frozen once published.
 
-An interim config group of `ilee2hitdistribution` was used briefly to dodge the collision and has
+An interim config group of `ilee2hitstats` was used briefly to dodge the collision and has
 been dropped now that the whole plugin is uniquely named.
 
 ### Not yet verified in-game
@@ -188,7 +212,7 @@ discarded, so they simply sit alongside newer ones rather than merging.
 ### The "A with a hat" symbol
 
 Reported in the panel next to the attack counts. It was mojibake I introduced: I had edited
-`HitDistributionPanel.java` with a PowerShell `Get-Content -Raw` / `WriteAllText` round-trip, and
+`HitStatsPanel.java` with a PowerShell `Get-Content -Raw` / `WriteAllText` round-trip, and
 PowerShell 5.1 reads a BOM-less UTF-8 file as ANSI, so every U+00B7 middle dot became
 U+00C2 U+00B7. Repaired, and all nine separators are now written as escapes so the source is pure
 ASCII and no future round-trip can break them. Added as rule 12 in CLAUDE.md.
@@ -228,7 +252,7 @@ alert plugin uses for sampling on the tick as well as on the event.
 
 ### Filters
 
-- `HitDistributionStore.options` now takes the current filter and builds each list with its own
+- `HitStatsStore.options` now takes the current filter and builds each list with its own
   dimension ignored and the others applied. Choosing a weapon narrows the attack list to what was
   used with it; no box ever removes its own options, so a dead-end combination still offers a way
   out.
@@ -564,7 +588,7 @@ Two consequences worth writing down:
   nowhere else. Either way the tracker is reset, so a fight that opened before the clear cannot
   close afterwards and write ticks and damage the panel no longer counts.
 
-`HitDistributionStore` grew a package-private directory seam so the session-across-relog test can
+`HitStatsStore` grew a package-private directory seam so the session-across-relog test can
 use a temporary folder instead of writing into the player's real `~/.runelite`. Tests are at 62.
 
 ## Killing blows, and a view of the current fight
