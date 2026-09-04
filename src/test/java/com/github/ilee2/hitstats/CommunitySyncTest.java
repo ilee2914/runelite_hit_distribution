@@ -96,13 +96,38 @@ public class CommunitySyncTest
 	}
 
 	@Test
-	public void theOverrideWinsAndItsTrailingSlashIsTrimmed()
+	public void theOverrideWinsForDevelopmentHostsOnly()
 	{
+		// FakeConfig starts with a localhost override, so clear it to see the built-in URL.
+		config.serverUrl = "";
+		final String builtIn = sync.baseUrl();
+
 		config.serverUrl = "http://localhost:8787/";
-		assertEquals("http://localhost:8787", sync.baseUrl());
+		assertEquals("localhost is for wrangler dev", "http://localhost:8787", sync.baseUrl());
 
 		config.serverUrl = "   ";
-		assertNotEquals("blank is not an override", "", sync.baseUrl());
+		assertEquals("blank is not an override", builtIn, sync.baseUrl());
+
+		// A hidden setting that could point uploads at any host would be an exfiltration route.
+		// Anything outside localhost and this plugin's own subdomain is ignored.
+		config.serverUrl = "https://evil.example.com";
+		assertEquals("a foreign host must be ignored", builtIn, sync.baseUrl());
+
+		config.serverUrl = "https://osrs-hit-stats-worker.evil.example.com";
+		assertEquals("a lookalike host must be ignored", builtIn, sync.baseUrl());
+
+		config.serverUrl = "not a url at all";
+		assertEquals("an unparseable override must be ignored", builtIn, sync.baseUrl());
+	}
+
+	@Test
+	public void theStagingWorkerIsReachableForTesting()
+	{
+		// Same subdomain as the built-in server, so a sideloaded build can be pointed at staging.
+		config.serverUrl = "";
+		final String staging = sync.baseUrl().replace("osrs-hit-stats-worker", "osrs-hit-stats-worker-staging");
+		config.serverUrl = staging;
+		assertEquals(staging, sync.baseUrl());
 	}
 
 	@Test

@@ -4,7 +4,9 @@ import com.github.ilee2.hitstats.HitStatsConfig;
 import com.github.ilee2.hitstats.HitStatsStore;
 import com.google.gson.Gson;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
@@ -213,12 +215,76 @@ public class CommunitySync
 		nextAttemptAt = System.currentTimeMillis() + backoffMs;
 	}
 
-	/** @return the community base URL: the hidden development override, else the built-in one. */
+	/**
+	 * @return the community base URL: the built-in one, or the hidden development override when
+	 * it points somewhere this plugin is allowed to talk to.
+	 *
+	 * <p>The override exists so a sideloaded build can be tested against {@code wrangler dev} or
+	 * the staging Worker. A hidden setting that could redirect uploads to <em>any</em> host would
+	 * be an exfiltration route wearing a developer's coat, so anything but localhost and this
+	 * plugin's own subdomain is ignored and logged.
+	 */
 	public String baseUrl()
 	{
 		final String override = config.serverUrl();
-		final String url = override == null || override.trim().isEmpty() ? DEFAULT_BASE_URL : override.trim();
+		if (override != null && !override.trim().isEmpty())
+		{
+			final String url = withoutTrailingSlash(override.trim());
+			if (isAllowedHost(url))
+			{
+				return url;
+			}
+			log.warn("Ignoring the serverUrl override: {} is not localhost or {}", url, allowedSuffix());
+		}
+		return withoutTrailingSlash(DEFAULT_BASE_URL);
+	}
+
+	private static String withoutTrailingSlash(String url)
+	{
 		return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+	}
+
+	/** The built-in host with its first label removed: the subdomain this plugin's Workers live on. */
+	private static String allowedSuffix()
+	{
+		final String host = hostOf(DEFAULT_BASE_URL);
+		if (host == null)
+		{
+			return "";
+		}
+		final int dot = host.indexOf('.');
+		return dot < 0 ? host : host.substring(dot + 1);
+	}
+
+	static boolean isAllowedHost(String url)
+	{
+		final String host = hostOf(url);
+		if (host == null)
+		{
+			return false;
+		}
+		if ("localhost".equals(host) || "127.0.0.1".equals(host) || "[::1]".equals(host)
+			|| "::1".equals(host))
+		{
+			return true;
+		}
+
+		final String suffix = allowedSuffix();
+		return !suffix.isEmpty() && (host.equals(suffix) || host.endsWith("." + suffix));
+	}
+
+	@Nullable
+	private static String hostOf(String url)
+	{
+		try
+		{
+			final String host = URI.create(url).getHost();
+			return host == null ? null : host.toLowerCase(Locale.ROOT);
+		}
+		catch (IllegalArgumentException e)
+		{
+			return null;
+		}
 	}
 
 	/**

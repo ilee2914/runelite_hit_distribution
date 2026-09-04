@@ -156,8 +156,13 @@ Notes:
    (`@Slf4j`, `@Getter`), Guice DI, tabs for indentation, braces on their own line.
 4. **No automation**: this plugin only ever observes and records. Never add anything that sends
    input, queues a menu action, or changes game state.
-5. **The network is opt-in, one-way by default, and never on a hot path**: nothing leaves the
-   client unless `uploadEnabled` is on, and its description states exactly what is sent. Never
+5. **The network is opt-in in both directions, and never on a hot path**: with the two Community
+   switches off the plugin makes no request of any kind. Uploads need `uploadEnabled`; the
+   community chart needs `showCommunity`, which is **also off by default** because fetching an
+   average is still contacting a server, and a plugin that phones home before anyone asks it to
+   is what Hub review exists to catch. Both descriptions state exactly what is sent. The hidden
+   `serverUrl` override is restricted to localhost and this plugin's own subdomain, so it cannot
+   be turned into a redirect to somewhere else. Never
    send the character name, account hash, world, position, chat, or anything about another
    player; the uploader id is a random UUID in the history file. Use the **injected**
    `OkHttpClient` (through `sync.SyncTransport`), never a new one. Uploads happen on the

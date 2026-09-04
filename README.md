@@ -175,8 +175,18 @@ from anything about your account. Clearing your history creates a new one.
 
 Your statistics are sent when you log out, when you close the client, once after you log in, and
 on a timer while you play. Never per attack. The panel's bottom line says when the last upload
-happened and shows the first characters of your id; quote it in a GitHub issue if you ever want
-your data removed.
+happened and shows the first characters of your id.
+
+**Seeing the community chart is a separate switch**, and it is also off by default. Turning it on
+asks the server for an average whenever your filter changes; that request carries the filter and
+nothing else. You do not have to share your own hits to use it, and with both switches off the
+plugin never contacts the network at all.
+
+**How long it is kept.** Everything shared is kept indefinitely, so the community averages keep
+improving and a change to the game can be measured against what came before. Nothing identifies
+you: the id is random and is not derived from your account. If you want your data removed, open
+an issue quoting the id shown in the panel and it will be deleted along with the aggregates
+rebuilt without it.
 
 ## Configuration
 
