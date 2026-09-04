@@ -13,6 +13,8 @@ repositories {
 	mavenCentral()
 }
 
+// Keep in step with CommunitySync.CLIENT_VERSION, which is what the server actually sees:
+// the Plugin Hub builds in "standard" mode and replaces this file.
 version = '1.1.0'
 group = 'com.github.ilee2.hitstats'
 
@@ -26,17 +28,6 @@ dependencies {
 	testImplementation 'junit:junit:4.12'
 	testImplementation group: 'net.runelite', name:'client', version: runeLiteVersion
 	testImplementation group: 'net.runelite', name:'jshell', version: runeLiteVersion
-}
-
-// The plugin reports its own version to the community server, and OkHttpTransport reads it from
-// the jar manifest. Without this it only ever knows itself as "dev".
-tasks.named('jar') {
-	manifest {
-		attributes(
-			'Implementation-Title': rootProject.name,
-			'Implementation-Version': project.version
-		)
-	}
 }
 
 tasks.withType(JavaCompile).configureEach {

@@ -36,7 +36,7 @@ public class OkHttpTransport implements SyncTransport
 			.connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
 			.readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
 			.build();
-		this.userAgent = "hit-stats/" + version();
+		this.userAgent = CommunitySync.clientVersion();
 	}
 
 	@Override
@@ -78,13 +78,5 @@ public class OkHttpTransport implements SyncTransport
 			gz.write(json);
 		}
 		return out.toByteArray();
-	}
-
-	/** The plugin version, for the User-Agent; only a packaged jar carries one. */
-	private static String version()
-	{
-		final Package pkg = OkHttpTransport.class.getPackage();
-		final String implementation = pkg == null ? null : pkg.getImplementationVersion();
-		return implementation == null ? "dev" : implementation;
 	}
 }

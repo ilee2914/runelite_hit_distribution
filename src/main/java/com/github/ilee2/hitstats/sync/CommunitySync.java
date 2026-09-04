@@ -40,6 +40,15 @@ public class CommunitySync
 
 	static final String SYNC_PATH = "/v1/sync";
 
+	/**
+	 * What this build calls itself to the server, which uses it to retire payload versions it no
+	 * longer accepts. A plain constant on purpose: the Plugin Hub builds submissions in
+	 * "standard" mode, which replaces build.gradle, so anything read from the jar manifest is
+	 * present when built here and absent when built by the Hub. Keep it in step with the version
+	 * in build.gradle.
+	 */
+	static final String CLIENT_VERSION = "1.1.0";
+
 	/** Contexts per upload. Halved for the session if the server says a batch was too large. */
 	private static final int MAX_BATCH = 2000;
 	private static final int MIN_BATCH = 50;
@@ -306,9 +315,7 @@ public class CommunitySync
 
 	static String clientVersion()
 	{
-		final Package pkg = CommunitySync.class.getPackage();
-		final String implementation = pkg == null ? null : pkg.getImplementationVersion();
-		return "hit-stats/" + (implementation == null ? "dev" : implementation);
+		return "hit-stats/" + CLIENT_VERSION;
 	}
 
 	/** One line for the bottom of the panel, or null when there is nothing worth saying. */
